@@ -1,0 +1,276 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ tokens
+   Cool paper, warm signal. The single warm accent is reserved for the live
+   and the actionable. Nothing else gets to be warm.
+
+   Structure is Material: an elevation ladder, tonal surface tiers, state
+   layers and a shape scale. The palette and type are §7's, so the app reads
+   as itself rather than as Material's defaults. */
+
+:root {
+  /* surface — cool, not cream */
+  --paper: #eff1f5;
+  --paper-raised: #ffffff;
+  --paper-sunk: #e4e7ee;
+
+  /* tonal tiers between paper and paper-raised, for nested cards */
+  --surface-1: #f7f8fb;
+  --surface-2: #ffffff;
+  --surface-3: #ffffff;
+
+  /* ink */
+  --ink: #171a2e;
+  --ink-2: #5b6178;
+  --ink-3: #8b90a3;
+  --hairline: #d6dae4;
+
+  /* signal — reserved, never decorative */
+  --amber: #c87a16;
+  --amber-soft: #fbeed8;
+  --live: #d93b3b;
+
+  /* status */
+  --ok: #1f7a5c;
+  --ok-soft: #e1f2eb;
+
+  /* shape scale */
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* elevation ladder — one shadow colour, four heights */
+  --elev-0: none;
+  --elev-1:
+    0 1px 2px rgb(23 26 46 / 0.05), 0 1px 3px 1px rgb(23 26 46 / 0.04);
+  --elev-2:
+    0 1px 2px rgb(23 26 46 / 0.06), 0 4px 10px 2px rgb(23 26 46 / 0.06);
+  --elev-3:
+    0 2px 4px rgb(23 26 46 / 0.06), 0 10px 28px 4px rgb(23 26 46 / 0.08);
+  --shadow: var(--elev-2);
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* The recording screen only. The room lights are usually off and the mic
+   screen is the one you stare at. The rest of the app stays light.
+   Elevation goes tonal here rather than shadowed — a shadow on a dark
+   surface reads as dirt, so height is expressed as a lighter surface. */
+[data-surface="dark"] {
+  --paper: #12141f;
+  --paper-raised: #1b1e2e;
+  --paper-sunk: #0c0e17;
+
+  --surface-1: #191c2a;
+  --surface-2: #1f2233;
+  --surface-3: #262a3d;
+
+  --ink: #eff1f5;
+  --ink-2: #a4aabf;
+  --ink-3: #6f7590;
+  --hairline: #2a2e42;
+
+  --amber: #e8a33d;
+  --amber-soft: #33270f;
+
+  --ok: #4cc79b;
+  --ok-soft: #10281f;
+
+  --elev-1: none;
+  --elev-2: none;
+  --elev-3: 0 8px 24px rgb(0 0 0 / 0.4);
+  --shadow: none;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-paper-sunk: var(--paper-sunk);
+
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hairline: var(--hairline);
+
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-live: var(--live);
+
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+
+  --radius-sm: var(--radius-sm);
+  --radius-DEFAULT: var(--radius);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  --shadow-e1: var(--elev-1);
+  --shadow-e2: var(--elev-2);
+  --shadow-e3: var(--elev-3);
+  --shadow-raised: var(--shadow);
+
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-inter-tight), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+
+  /* 12 / 14 / 16 / 20 / 28 / 44 — the timer is the only thing that gets 44 */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-2xl: 1.75rem;
+  --text-timer: 2.75rem;
+
+  --ease-signal: var(--ease);
+}
+
+/* ------------------------------------------------------------------- base */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-inter-tight), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* Visible focus everywhere. Part of "done", not polish. */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Section labels: mono, small, quiet. Used above every card group. */
+.eyebrow {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------- state layers
+   Material's interaction model: a tinted overlay at a fixed opacity rather
+   than a different background colour per state. `isolation` keeps the
+   negative z-index inside the element, so the layer sits above the card
+   background but below its content. */
+
+.state-layer {
+  position: relative;
+  isolation: isolate;
+}
+
+.state-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms var(--ease);
+}
+
+.state-layer:hover::after {
+  opacity: 0.05;
+}
+
+.state-layer:focus-visible::after {
+  opacity: 0.09;
+}
+
+.state-layer:active::after {
+  opacity: 0.12;
+}
+
+.state-layer:disabled::after,
+.state-layer[aria-disabled="true"]::after {
+  opacity: 0;
+}
+
+/* --------------------------------------------------------------- motion
+   Three moments only. Everything collapses to an opacity fade when the
+   user has asked for less. */
+
+@keyframes huddle-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes huddle-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes huddle-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* the payoff moment: ledger rows stagger in at 40ms intervals */
+.stagger-in {
+  animation: huddle-rise 260ms var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+.live-dot {
+  animation: huddle-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .stagger-in {
+    animation: huddle-fade 1ms linear both;
+    animation-delay: 0ms;
+  }
+
+  .live-dot {
+    animation: none;
+    opacity: 1;
+  }
+}
