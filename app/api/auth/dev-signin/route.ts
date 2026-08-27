@@ -89,30 +89,15 @@ export async function POST(request: Request) {
     );
   }
 
-  // generateLink does NOT send mail — it returns the token we would have
-  // emailed. Redeeming it ourselves is what makes this instant.
-  const { data: link, error: linkError } = await admin.auth.admin.generateLink({
-    type: "magiclink",
-    email,
-  });
+  // GoTrue has accepted both labels for a magic-link hash across versions, so
+  // the specific one is tried first and the generic one is the fallback. Each
+  // attempt mints its own token — see attemptSignIn.
+  const first = await attemptSignIn(supabase, admin, email, "magiclink");
+  const outcome = first.ok ? first : await attemptSignIn(supabase, admin, email, "email");
 
-  const tokenHash = link?.properties?.hashed_token;
-  if (linkError || !tokenHash) {
-    console.error("dev-signin: generateLink failed", linkError);
+  if (!outcome.ok) {
     return NextResponse.json(
-      { error: `Couldn't sign in: ${linkError?.message ?? "no token issued"}` },
-      { status: 500 },
-    );
-  }
-
-  // GoTrue has accepted both labels for a magic-link hash across versions;
-  // try the specific one, fall back to the generic rather than dead-ending.
-  const verified = await verify(supabase, tokenHash, "magiclink");
-  const outcome = verified ?? (await verify(supabase, tokenHash, "email"));
-
-  if (!outcome) {
-    return NextResponse.json(
-      { error: "Couldn't start a session for that address. Try again." },
+      { error: `Couldn't sign in: ${outcome.error}` },
       { status: 500 },
     );
   }
@@ -124,21 +109,54 @@ export async function POST(request: Request) {
   return NextResponse.json({ ok: true, email });
 }
 
-/** Sets the session cookies as a side effect when it succeeds. */
-async function verify(
+type Attempt = { ok: true } | { ok: false; error: string };
+
+/**
+ * One complete sign-in attempt: mint a token, then redeem it. Sets the session
+ * cookies as a side effect when it succeeds.
+ *
+ * Each attempt mints its OWN token, deliberately. A *successful* verifyOtp
+ * spends the token; a verify rejected on the type label usually leaves it
+ * spendable, so reusing it mostly works — but only mostly. Anything that
+ * fails after GoTrue has already processed the token (a lapsed TTL between
+ * the two calls, a retried request, a partial success) leaves the second
+ * attempt redeeming a spent token and reporting `otp_expired`, which buries
+ * the real reason the first attempt failed under a misleading "link expired".
+ * Minting per attempt decouples the two so each failure reports itself.
+ *
+ * `generateLink` is always called with `magiclink` (that is the kind of token
+ * we want); only the label `verifyOtp` is asked to interpret it under varies.
+ * It sends no mail — it returns the token we would have emailed, and
+ * redeeming it here is what makes this instant.
+ */
+async function attemptSignIn(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  tokenHash: string,
+  admin: ReturnType<typeof createAdminClient>,
+  email: string,
   type: EmailOtpType,
-): Promise<true | null> {
+): Promise<Attempt> {
+  const { data: link, error: linkError } = await admin.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+  });
+
+  const tokenHash = link?.properties?.hashed_token;
+  if (linkError || !tokenHash) {
+    console.error(`dev-signin: generateLink for ${type} failed`, linkError);
+    return { ok: false, error: linkError?.message ?? "no token issued" };
+  }
+
   const { error } = await supabase.auth.verifyOtp({
     token_hash: tokenHash,
     type,
   });
+
   if (error) {
     console.error(`dev-signin: verifyOtp(${type}) failed`, error);
-    return null;
+    return { ok: false, error: error.message };
   }
-  return true;
+
+  return { ok: true };
 }
 
 function isAlreadyRegistered(error: { message?: string; code?: string }) {
