@@ -22,17 +22,27 @@ function Wrapper({
   label,
   hint,
   error,
+  hideLabel,
   children,
 }: {
   id: string;
   label: string;
   hint?: string;
   error?: string;
+  /** Keeps the label for screen readers but drops it visually — for fields
+   *  whose purpose is obvious from placement, like the huddle search. */
+  hideLabel?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-ink-2">
+      <label
+        htmlFor={id}
+        className={cx(
+          "text-sm font-medium text-ink-2",
+          hideLabel && "sr-only",
+        )}
+      >
         {label}
       </label>
       {children}
@@ -53,17 +63,18 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
   hint?: string;
   error?: string;
+  hideLabel?: boolean;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { label, hint, error, className, id: idProp, ...props },
+  { label, hint, error, hideLabel, className, id: idProp, ...props },
   ref,
 ) {
   const generated = useId();
   const id = idProp ?? generated;
 
   return (
-    <Wrapper id={id} label={label} hint={hint} error={error}>
+    <Wrapper id={id} label={label} hint={hint} error={error} hideLabel={hideLabel}>
       <input
         ref={ref}
         id={id}
