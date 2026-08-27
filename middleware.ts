@@ -7,8 +7,6 @@ const PUBLIC_PATHS = [
   // Sign-in and sign-out must be reachable with no session — the sign-in
   // route is what creates one.
   "/api/auth",
-  "/auth/callback",
-  "/auth/error",
 ];
 
 /**

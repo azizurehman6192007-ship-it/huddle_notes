@@ -108,7 +108,7 @@ export function LoginForm({ signedInAs }: { signedInAs?: string | null }) {
           hint={
             signedInAs
               ? "Entering a different address switches to that person."
-              : "No password, no link to click — you go straight in."
+              : "You'll go straight in — there's no password and nothing to confirm."
           }
         />
         <Button type="submit" variant="primary" size="lg" busy={busy}>

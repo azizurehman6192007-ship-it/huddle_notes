@@ -619,11 +619,17 @@ Decisions made while building that §1–§14 did not specify. Keep this section
 
 ### Added after Phase 3 — auth verification removed (temporary)
 
-- **⚠️ Sign-in no longer verifies anything.** §2 says magic link; that is switched off.
-  `/api/auth/dev-signin` takes an email and mints a session for it with no proof of
-  ownership. This is internal-testing scaffolding, not a design decision — README.md
-  has the reversal steps, and it fails closed under `NODE_ENV=production` unless
-  `ALLOW_UNVERIFIED_SIGNIN=true`.
+- **⚠️ Sign-in no longer verifies anything.** §2 says magic link; that implementation
+  has been **deleted**, not disabled. `/api/auth/dev-signin` takes an email and mints a
+  session for it with no proof of ownership, and it is the only sign-in path left in the
+  tree. This is internal-testing scaffolding, not a design decision — README.md has the
+  steps to write verification back, and it fails closed under `NODE_ENV=production`
+  unless `ALLOW_UNVERIFIED_SIGNIN=true`.
+- **Removed with it**: `app/auth/callback/route.ts` (the PKCE / token_hash landing),
+  `app/auth/error/page.tsx` (expired-link screen) and `app/(auth)/login/authError.ts`
+  (magic-link failure copy). `/auth/callback` and `/auth/error` are gone from
+  `PUBLIC_PATHS` too. Note this is unrelated to the `magiclink` token type
+  `dev-signin` mints internally — that is how a session is created, not an email flow.
 - **Why a real session, not our own cookie.** Every page and route reads through RLS,
   and the predicates key off `auth.jwt() ->> 'email'`. The bypass goes
   `admin.createUser` → `admin.generateLink` (which sends no mail) → `verifyOtp`, so the

@@ -10,7 +10,7 @@ The whole loop lives at `/`. Tap to record, tap to stop, it processes in place, 
 appear inline and editable, and Send emails them with the PDF attached. `/?h=<id>` pins
 an earlier huddle into the same screen.
 
-Working: sign-in (**verification currently disabled — see below**), team + members CRUD, chunked recording, Groq transcription,
+Working: sign-in (email only — **no verification, see below**), team + members CRUD, chunked recording, Groq transcription,
 Qwen notes (Zod-validated), owner matching, inline editing, watermarked PDF, Resend
 delivery with per-recipient logging and a delivery webhook.
 
@@ -35,15 +35,26 @@ the product is being built. `/api/auth/dev-signin` mints a genuine Supabase sess
 the admin API (`createUser` → `generateLink` → `verifyOtp`) without sending mail, so RLS,
 `auth.uid()` and `create_team()` all still behave exactly as they do under real auth.
 
-**Before this is used with real external users, or with anything confidential:**
+The magic-link implementation this replaced has been **deleted**, not parked — there is
+no second sign-in path left in the tree. Restoring verification means writing it again:
 
-1. Delete `app/api/auth/dev-signin/route.ts`.
-2. Restore verification in `app/(auth)/login/LoginForm.tsx` — either
-   `supabase.auth.signInWithOtp({ email })` (the magic-link/OTP flow this replaced;
-   `app/auth/callback/route.ts` and `app/(auth)/login/authError.ts` are still in the
-   tree and still work), or `supabase.auth.signInWithOAuth({ provider: "google" })`.
-3. Leave `PUBLIC_PATHS` in `middleware.ts` as it is — `/api/auth` still needs to be
-   public for `/api/auth/signout`.
+1. Delete `app/api/auth/dev-signin/route.ts` and the `fetch` to it in
+   `app/(auth)/login/LoginForm.tsx`.
+2. Put a real method in its place. Either:
+   - **Email OTP / magic link** — `supabase.auth.signInWithOtp({ email, options: {
+     emailRedirectTo } })` in the form, plus a `/auth/callback` route handler that
+     redeems the `code`/`token_hash` with `exchangeCodeForSession` / `verifyOtp`, plus
+     an error screen for expired links. Add the callback URL to Supabase →
+     Authentication → URL Configuration → Redirect URLs, and add `/auth/callback` back
+     to `PUBLIC_PATHS` in `middleware.ts`.
+   - **Google** — `supabase.auth.signInWithOAuth({ provider: "google" })`, same callback
+     route and same allow-list entry.
+3. Leave the rest of `PUBLIC_PATHS` alone — `/api/auth` is still needed for
+   `/api/auth/signout`.
+
+Nothing downstream changes either way: `/api/auth/dev-signin` mints a genuine session,
+so RLS, `auth.uid()`, `meetings.created_by` and `create_team()` already behave exactly
+as they will under real auth.
 
 As a backstop, the bypass **fails closed in production**: with `NODE_ENV=production` it
 returns 403 unless `ALLOW_UNVERIFIED_SIGNIN=true` is set explicitly. An accidental
@@ -95,13 +106,7 @@ the notes screen disables and explains rather than failing at the last step.
 To get delivery and bounce status, add a webhook in Resend pointing at
 `{APP_URL}/api/webhooks/resend?key={RESEND_WEBHOOK_SECRET}`.
 
-### 3. Auth redirect
-
-Not needed while unverified sign-in is on — nothing is emailed. When verification is
-restored, add `http://localhost:3000/auth/callback` to Supabase → Authentication →
-URL Configuration → Redirect URLs.
-
-### 4. Run
+### 3. Run
 
 ```bash
 npm install
