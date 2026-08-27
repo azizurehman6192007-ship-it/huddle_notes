@@ -5,20 +5,17 @@ import { useRouter } from "next/navigation";
 import { EditableText } from "@/components/notes/EditableText";
 import { SendSheet, type Recipient } from "@/components/notes/SendSheet";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Card, CardLabel, CardList } from "@/components/ui/Card";
+import { Card, CardLabel } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { cx } from "@/lib/util/cx";
-import { matchOwner } from "@/lib/notes/match";
 import type { Notes } from "@/lib/ai/schema";
 import type { ActionItemRow, MeetingStatus } from "@/lib/supabase/types";
 
 export interface ActionItemView {
   id: string;
   task: string;
-  ownerMemberId: string | null;
-  ownerNameRaw: string | null;
 }
 
 export interface NotesViewProps {
@@ -26,7 +23,6 @@ export interface NotesViewProps {
   status: MeetingStatus;
   notes: Notes;
   actionItems: ActionItemView[];
-  members: { id: string; name: string }[];
   recipients: Recipient[];
   emailConfigured: boolean;
   /** Names only, never values — safe to render. */
@@ -75,11 +71,6 @@ export function NotesView(props: NotesViewProps) {
 
     const payload: Partial<ActionItemRow> = {};
     if (patch.task !== undefined) payload.task = patch.task;
-    if (patch.ownerMemberId !== undefined) {
-      payload.owner_member_id = patch.ownerMemberId;
-      // A human assigned it, so it is no longer a guess.
-      payload.owner_confidence = patch.ownerMemberId ? "high" : "low";
-    }
 
     const { error } = await supabase
       .from("action_items")
@@ -168,8 +159,6 @@ export function NotesView(props: NotesViewProps) {
     }
   }
 
-  const unassignedCount = items.filter((item) => !item.ownerMemberId).length;
-
   return (
     <div className="flex flex-col gap-8">
       <span
@@ -189,27 +178,17 @@ export function NotesView(props: NotesViewProps) {
           : "Draft — not sent yet"}
       </span>
 
-      {/* ------------------------------------ summary + action items, one box */}
+      {/* -------------------------------------- every section, one single card */}
       <section>
-        <CardLabel
-          trailing={
-            unassignedCount > 0 ? (
-              <span className="inline-flex h-6 items-center rounded-full bg-amber-soft px-2 text-xs font-medium text-amber">
-                {unassignedCount} need{unassignedCount === 1 ? "s" : ""} an owner
-              </span>
-            ) : undefined
-          }
-        >
-          Notes
-        </CardLabel>
+        <CardLabel>Notes</CardLabel>
 
-        <Card padding="loose" className="flex flex-col gap-6">
+        <Card padding="loose" className="flex flex-col">
           <SummaryBlock
             value={notes.summary}
             onSave={(summary) => persistNotes({ ...notes, summary })}
           />
 
-          <div className="border-t border-hairline" />
+          <Divider />
 
           <div>
             <h3 className="eyebrow mb-3">Action items</h3>
@@ -224,104 +203,77 @@ export function NotesView(props: NotesViewProps) {
                   <li
                     key={item.id}
                     style={{ "--i": index } as React.CSSProperties}
-                    className="stagger-in border-b border-hairline px-1 py-3 first:pt-0 last:border-b-0 last:pb-0"
+                    className="stagger-in flex items-start gap-1 border-b border-hairline px-1 py-2.5 first:pt-0 last:border-b-0 last:pb-0"
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Unassigned reads as a normal dropdown with an amber
-                          edge — it needs attention, it is not an error. The
-                          old "? samra" put the model's raw guess inside the
-                          control, which looked like corrupted data. */}
-                      <select
-                        aria-label={`Owner for: ${item.task}`}
-                        value={item.ownerMemberId ?? ""}
-                        onChange={(event) =>
-                          void patchItem(item.id, {
-                            ownerMemberId: event.target.value || null,
-                          })
-                        }
-                        className={cx(
-                          "h-8 rounded-[var(--radius)] border bg-paper-raised px-2 text-sm text-ink",
-                          item.ownerMemberId
-                            ? "border-hairline"
-                            : "border-amber ring-1 ring-amber/30",
-                        )}
-                      >
-                        <option value="">Unassigned</option>
-                        {props.members.map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {member.name}
-                          </option>
-                        ))}
-                      </select>
-
-                      <OwnerHint
-                        item={item}
-                        members={props.members}
-                        onAssign={(memberId) =>
-                          void patchItem(item.id, { ownerMemberId: memberId })
-                        }
+                    <span
+                      aria-hidden
+                      className="mt-2.5 size-1.5 shrink-0 rounded-full bg-ink-3"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <EditableText
+                        value={item.task}
+                        ariaLabel="Action item"
+                        multiline
+                        className="text-sm"
+                        onSave={(task) => void patchItem(item.id, { task })}
                       />
                     </div>
-
-                    <div className="mt-1 flex items-start gap-1">
-                      <div className="min-w-0 flex-1">
-                        <EditableText
-                          value={item.task}
-                          ariaLabel="Task"
-                          multiline
-                          className="text-sm"
-                          onSave={(task) => void patchItem(item.id, { task })}
-                        />
-                      </div>
-                      <IconButton
-                        label={`Remove action item: ${item.task}`}
-                        onClick={() => setPendingDelete(item)}
-                        className="-mr-1 size-8 hover:text-live"
-                      >
-                        <span aria-hidden className="text-lg leading-none">
-                          ×
-                        </span>
-                      </IconButton>
-                    </div>
+                    <IconButton
+                      label={`Remove action item: ${item.task}`}
+                      onClick={() => setPendingDelete(item)}
+                      className="-mr-1 size-8 hover:text-live"
+                    >
+                      <span aria-hidden className="text-lg leading-none">
+                        ×
+                      </span>
+                    </IconButton>
                   </li>
                 ))}
               </ul>
             )}
-
           </div>
+
+          {(["decisions", "open_questions"] as const).map((key) =>
+            notes[key].length === 0 ? null : (
+              <div key={key}>
+                <Divider />
+                <h3 className="eyebrow mb-3">
+                  {key === "decisions" ? "Decisions" : "Open questions"}
+                </h3>
+                <ul className="-mx-1">
+                  {notes[key].map((entry, index) => (
+                    <li
+                      key={`${key}-${index}`}
+                      className="flex items-start gap-1 border-b border-hairline px-1 py-2.5 first:pt-0 last:border-b-0 last:pb-0"
+                    >
+                      <span
+                        aria-hidden
+                        className="mt-2.5 size-1.5 shrink-0 rounded-full bg-ink-3"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <EditableText
+                          value={entry}
+                          ariaLabel={
+                            key === "decisions" ? "Decision" : "Open question"
+                          }
+                          multiline
+                          className="text-sm"
+                          onSave={(next) => {
+                            const list = [...notes[key]];
+                            if (next) list[index] = next;
+                            else list.splice(index, 1);
+                            void persistNotes({ ...notes, [key]: list });
+                          }}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ),
+          )}
         </Card>
       </section>
-
-      {/* ------------------------------------------ decisions and questions */}
-      {(["decisions", "open_questions"] as const).map((key) =>
-        notes[key].length === 0 ? null : (
-          <section key={key}>
-            <CardLabel>
-              {key === "decisions" ? "Decisions" : "Open questions"}
-            </CardLabel>
-            <CardList as="ul">
-              {notes[key].map((entry, index) => (
-                <li
-                  key={`${key}-${index}`}
-                  className="border-b border-hairline p-3 text-sm last:border-b-0 sm:px-4"
-                >
-                  <EditableText
-                    value={entry}
-                    ariaLabel={key === "decisions" ? "Decision" : "Open question"}
-                    multiline
-                    onSave={(next) => {
-                      const list = [...notes[key]];
-                      if (next) list[index] = next;
-                      else list.splice(index, 1);
-                      void persistNotes({ ...notes, [key]: list });
-                    }}
-                  />
-                </li>
-              ))}
-            </CardList>
-          </section>
-        ),
-      )}
 
       {/* ------------------------------------------------------------ send */}
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -337,10 +289,16 @@ export function NotesView(props: NotesViewProps) {
         >
           Download PDF
         </Button>
+        {/* Deliberately never disabled. `emailConfigured` is a snapshot taken
+            when this page was rendered on the server; the send route re-reads
+            the environment on every request. Once the two disagree — a tab
+            open from before the variables were set, a back-navigation, a
+            restored page — the button stays grey forever while sending
+            actually works, with no way to recover but a hard reload. The route
+            already answers 503 with a readable reason, so it decides. */}
         <Button
           variant="primary"
           size="lg"
-          disabled={!props.emailConfigured}
           onClick={() => setSheetOpen(true)}
           className="sm:flex-[2]"
         >
@@ -396,51 +354,9 @@ export function NotesView(props: NotesViewProps) {
   );
 }
 
-/**
- * What the transcript said, when nobody is assigned yet.
- *
- * The roster can grow after a huddle is processed, so the match is re-run
- * against the current members rather than trusting the one made at write time
- * — a person added this morning becomes a one-tap assign instead of staying
- * stuck as a raw string forever.
- */
-function OwnerHint({
-  item,
-  members,
-  onAssign,
-}: {
-  item: ActionItemView;
-  members: { id: string; name: string }[];
-  onAssign: (memberId: string) => void;
-}) {
-  if (item.ownerMemberId) return null;
-
-  const raw = item.ownerNameRaw?.trim();
-  if (!raw) {
-    return <span className="text-xs text-amber">Needs an owner</span>;
-  }
-
-  const suggestedId = matchOwner(raw, members).memberId;
-  const suggested = members.find((member) => member.id === suggestedId);
-
-  if (suggested) {
-    return (
-      <Button
-        variant="tonal"
-        size="sm"
-        className="h-8"
-        onClick={() => onAssign(suggested.id)}
-      >
-        Assign to {suggested.name}
-      </Button>
-    );
-  }
-
-  return (
-    <span className="text-xs text-ink-3">
-      Transcript said &ldquo;{raw}&rdquo;
-    </span>
-  );
+/** Hairline between blocks inside the single notes card. */
+function Divider() {
+  return <div className="my-6 border-t border-hairline" />;
 }
 
 /**
