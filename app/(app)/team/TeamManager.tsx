@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { Card, CardLabel, CardList } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EditableText } from "@/components/notes/EditableText";
 import { useToast } from "@/components/ui/Toast";
 import { LedgerRow } from "@/components/ledger/LedgerRow";
 import type { MemberRow, TeamRow, TranscribeLanguage } from "@/lib/supabase/types";
@@ -33,6 +35,9 @@ export function TeamManager({
   const [email, setEmail] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  /** The member awaiting confirmation, so the sheet can name them. */
+  const [pendingRemove, setPendingRemove] = useState<MemberRow | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const supabase = createClient();
 
@@ -83,16 +88,70 @@ export function TeamManager({
     refresh();
   }
 
+  /**
+   * Name and email are both editable after setup — a typo in an address means
+   * that person silently never gets the notes, and a wrong name is what the
+   * owner matcher tries to match action items against.
+   */
+  async function editMember(target: MemberRow, patch: Partial<MemberRow>) {
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name) {
+        toast.show("A name is needed — it appears in the notes.", "error");
+        return;
+      }
+      patch = { ...patch, name };
+    }
+
+    if (patch.email !== undefined) {
+      const email = patch.email.trim().toLowerCase();
+      if (!email.includes("@")) {
+        toast.show("That doesn't look like an email address.", "error");
+        return;
+      }
+      if (
+        members.some(
+          (m) => m.id !== target.id && m.email.toLowerCase() === email,
+        )
+      ) {
+        toast.show(`${email} is already on the team.`, "error");
+        return;
+      }
+      patch = { ...patch, email };
+    }
+
+    const { error } = await supabase
+      .from("members")
+      .update(patch)
+      .eq("id", target.id);
+
+    if (error) {
+      toast.show("Couldn't save that. Try again.", "error");
+      return;
+    }
+
+    toast.show("Saved", "ok");
+    refresh();
+  }
+
+  /**
+   * Deactivated, not deleted: action items and speaker segments point at this
+   * row, and hard-deleting would orphan the history of every past huddle.
+   */
   async function removeMember(target: MemberRow) {
+    setRemoving(true);
     const { error } = await supabase
       .from("members")
       .update({ active: false })
       .eq("id", target.id);
+    setRemoving(false);
 
     if (error) {
       toast.show("Couldn't remove them. Try again.", "error");
       return;
     }
+
+    setPendingRemove(null);
     toast.show(`${target.name} removed`, "ok");
     refresh();
   }
@@ -124,12 +183,45 @@ export function TeamManager({
           <CardList as="ul">
             {activeMembers.map((member) => (
               <li key={member.id}>
-                <LedgerRow name={member.name}>
+                {/* The lead edits in place, as on the notes screen: click the
+                    text, blur saves. Everyone else reads the same rows. */}
+                <LedgerRow
+                  name={
+                    isLead ? (
+                      <span className="-ml-2 block">
+                        <EditableText
+                          value={member.name}
+                          ariaLabel={`Name for ${member.name}`}
+                          placeholder="Add a name"
+                          className="font-display text-base"
+                          onSave={(name) => void editMember(member, { name })}
+                        />
+                      </span>
+                    ) : (
+                      member.name
+                    )
+                  }
+                >
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <span className="font-mono text-xs text-ink-3">
-                      {member.email}
-                      {member.role === "lead" ? " · lead" : ""}
-                    </span>
+                    {isLead ? (
+                      <span className="-ml-2 min-w-0 flex-1 basis-48">
+                        <EditableText
+                          value={member.email}
+                          ariaLabel={`Email for ${member.name}`}
+                          placeholder="Add an email"
+                          className="font-mono text-xs text-ink-3"
+                          onSave={(email) => void editMember(member, { email })}
+                        />
+                      </span>
+                    ) : (
+                      <span className="font-mono text-xs text-ink-3">
+                        {member.email}
+                      </span>
+                    )}
+
+                    {member.role === "lead" && (
+                      <span className="font-mono text-xs text-ink-3">lead</span>
+                    )}
 
                     {isLead && (
                       <span className="ml-auto flex items-center gap-3">
@@ -148,10 +240,12 @@ export function TeamManager({
                           {member.receives_notes ? "Gets notes" : "No notes"}
                         </button>
 
+                        {/* Never offer to remove yourself — you'd lock
+                            yourself out of the team you are looking at. */}
                         {member.email.toLowerCase() !== signedInEmail && (
                           <button
                             type="button"
-                            onClick={() => void removeMember(member)}
+                            onClick={() => setPendingRemove(member)}
                             disabled={pending}
                             className="state-layer h-7 rounded-full px-2.5 text-xs font-medium text-ink-3 hover:text-live"
                           >
@@ -228,6 +322,25 @@ export function TeamManager({
           </Card>
         </section>
       )}
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        onClose={() => setPendingRemove(null)}
+        onConfirm={() => pendingRemove && void removeMember(pendingRemove)}
+        title="Remove from the team?"
+        confirmLabel="Remove"
+        busyLabel="Removing…"
+        busy={removing}
+      >
+        <p>
+          <span className="text-ink">{pendingRemove?.name}</span> stops
+          appearing in huddles and stops receiving notes.
+        </p>
+        <p className="mt-2 text-sm text-ink-3">
+          Past huddles keep their name and their action items — nothing already
+          recorded changes. Adding them again later restores them.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

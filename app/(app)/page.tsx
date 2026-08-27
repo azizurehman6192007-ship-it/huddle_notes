@@ -7,6 +7,7 @@ import { AppHeader } from "@/components/ui/AppHeader";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { CardLabel, CardList } from "@/components/ui/Card";
 import { HuddleConsole } from "@/components/huddle/HuddleConsole";
+import { DeleteHuddle } from "@/components/huddle/DeleteHuddle";
 import { LiveRefresh } from "@/components/huddle/LiveRefresh";
 import {
   formatDayLabel,
@@ -41,7 +42,7 @@ export default async function HuddlePage({
   const { h: legacyId } = await searchParams;
   if (legacyId) redirect(`/meetings/${legacyId}`);
 
-  const { team } = await requireMembership();
+  const { team, member } = await requireMembership();
   const supabase = await createClient();
 
   const [{ data: members }, { data: meetings }] = await Promise.all([
@@ -75,12 +76,19 @@ export default async function HuddlePage({
       {/* Keeps the status chips honest while the worker is still going. */}
       <LiveRefresh active={anyInFlight} />
 
-      <HuddleList rows={rows} />
+      <HuddleList rows={rows} canDelete={member.role === "lead"} />
     </div>
   );
 }
 
-function HuddleList({ rows }: { rows: ListedMeeting[] }) {
+function HuddleList({
+  rows,
+  canDelete,
+}: {
+  rows: ListedMeeting[];
+  /** Deleting is lead-only in RLS, so don't offer it to anyone else. */
+  canDelete: boolean;
+}) {
   if (rows.length === 0) {
     return (
       <p className="mt-10 text-center text-ink-2">
@@ -108,11 +116,14 @@ function HuddleList({ rows }: { rows: ListedMeeting[] }) {
             {group.meetings.map((meeting) => (
               <li
                 key={meeting.id}
-                className="border-b border-hairline last:border-b-0"
+                className="flex items-center border-b border-hairline last:border-b-0"
               >
+                {/* Delete sits beside the link, not inside it: a button nested
+                    in an anchor is invalid, and a stray tap must never both
+                    navigate and open a destructive sheet. */}
                 <Link
                   href={`/meetings/${meeting.id}`}
-                  className="state-layer flex min-h-16 items-center justify-between gap-3 px-4 py-3.5 sm:px-5"
+                  className="state-layer flex min-h-16 min-w-0 flex-1 items-center justify-between gap-3 py-3.5 pl-4 pr-3 sm:pl-5"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-ink">
@@ -132,6 +143,18 @@ function HuddleList({ rows }: { rows: ListedMeeting[] }) {
                     </span>
                   </span>
                 </Link>
+
+                {canDelete && (
+                  <span className="shrink-0 pr-2 sm:pr-3">
+                    <DeleteHuddle
+                      meetingId={meeting.id}
+                      title={meeting.title}
+                      dayLabel={formatDayLabel(
+                        parseDateOnly(meeting.meeting_date),
+                      )}
+                    />
+                  </span>
+                )}
               </li>
             ))}
           </CardList>

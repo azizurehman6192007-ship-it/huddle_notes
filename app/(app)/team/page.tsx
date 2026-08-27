@@ -3,6 +3,7 @@ import { requireMembership } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AppHeader } from "@/components/ui/AppHeader";
 import { TeamManager } from "./TeamManager";
+import { SignOutButton } from "./SignOutButton";
 import type { MemberRow } from "@/lib/supabase/types";
 
 export const metadata: Metadata = { title: "Team · Huddle" };
@@ -33,6 +34,18 @@ export default async function TeamPage() {
         isLead={member.role === "lead"}
         signedInEmail={member.email}
       />
+
+      {/* Until verification comes back, switching identity is how you test as
+          someone else — so there has to be a way out. */}
+      <section className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6">
+        <p className="text-sm text-ink-3">
+          Signed in as{" "}
+          <span className="font-mono text-xs text-ink-2">{member.email}</span>
+        </p>
+        <form action="/api/auth/signout" method="post">
+          <SignOutButton />
+        </form>
+      </section>
     </div>
   );
 }

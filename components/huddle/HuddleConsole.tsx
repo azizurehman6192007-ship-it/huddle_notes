@@ -57,7 +57,22 @@ export function HuddleConsole({
   const uploaderRef = useRef<ChunkUploader | null>(null);
   const releaseWakeLockRef = useRef<(() => void) | null>(null);
 
-  const supported = isRecordingSupported();
+  /**
+   * Feature detection must not happen during render. This is a client
+   * component, but Next still server-renders it, and `isRecordingSupported()`
+   * reads `window` — so it answers false on the server and true in the
+   * browser. That flipped StartCard between a <div> and a <button>, which is
+   * a hydration mismatch, not a cosmetic one.
+   *
+   * Assume support for the first paint (true on every browser we target) so
+   * server and client agree, then correct it after mount.
+   */
+  const [supported, setSupported] = useState(true);
+
+  useEffect(() => {
+    setSupported(isRecordingSupported());
+  }, []);
+
   const capturing =
     local.kind === "starting" ||
     local.kind === "recording" ||

@@ -4,9 +4,11 @@ import { requireMembership } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AppHeader } from "@/components/ui/AppHeader";
 import { StatusPill } from "@/components/ui/StatusPill";
-import { Card, CardLabel } from "@/components/ui/Card";
+import { Card } from "@/components/ui/Card";
 import { ProcessingView } from "@/components/huddle/ProcessingView";
 import { MeetingActions } from "@/components/huddle/MeetingActions";
+import { DeleteHuddle } from "@/components/huddle/DeleteHuddle";
+import { TranscriptEditor } from "@/components/transcript/TranscriptEditor";
 import { NotesView } from "@/components/notes/NotesView";
 import { NotesSchema } from "@/lib/ai/schema";
 import { isEmailConfigured } from "@/lib/email/resend";
@@ -30,7 +32,7 @@ export default async function MeetingDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { team } = await requireMembership();
+  const { team, member } = await requireMembership();
 
   const supabase = await createClient();
   const { data: meeting } = await supabase
@@ -173,31 +175,30 @@ export default async function MeetingDetailPage({
           </Card>
         )}
 
-        <section>
-          <CardLabel
-            trailing={
-              meeting.transcript ? (
-                <span className="font-mono text-xs text-ink-3">
-                  {meeting.transcript.trim().split(/\s+/).length} words
-                </span>
-              ) : undefined
-            }
-          >
-            Transcript
-          </CardLabel>
+        <TranscriptEditor
+          meetingId={meeting.id}
+          transcript={meeting.transcript}
+          // Nothing to correct while the worker still owns the row, and an
+          // edit saved mid-pipeline would be overwritten by transcription.
+          editable={!inFlight && Boolean(meeting.transcript?.trim())}
+          placeholder={
+            inFlight
+              ? "Not transcribed yet."
+              : "No transcript was saved for this huddle."
+          }
+        />
 
-          <Card padding="loose">
-            {meeting.transcript?.trim() ? (
-              <p className="whitespace-pre-wrap text-ink">{meeting.transcript}</p>
-            ) : (
-              <p className="text-ink-2">
-                {inFlight
-                  ? "Not transcribed yet."
-                  : "No transcript was saved for this huddle."}
-              </p>
-            )}
-          </Card>
-        </section>
+        {member.role === "lead" && (
+          <section className="border-t border-hairline pt-6">
+            <DeleteHuddle
+              meetingId={meeting.id}
+              title={meeting.title}
+              dayLabel={formatDayLabel(parseDateOnly(meeting.meeting_date))}
+              variant="button"
+              redirectHome
+            />
+          </section>
+        )}
       </div>
     </div>
   );

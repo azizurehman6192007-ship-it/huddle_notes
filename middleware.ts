@@ -2,7 +2,14 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { publicEnv } from "@/lib/env";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/auth/error"];
+const PUBLIC_PATHS = [
+  "/login",
+  // Sign-in and sign-out must be reachable with no session — the sign-in
+  // route is what creates one.
+  "/api/auth",
+  "/auth/callback",
+  "/auth/error",
+];
 
 /**
  * Refreshes the Supabase session cookie on every request and keeps signed-out
@@ -55,12 +62,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
+  // /login is deliberately NOT redirected away from when a session exists.
+  // It used to be, which meant a signed-in user could never reach the form to
+  // switch address — so every email they typed appeared to open the same
+  // dashboard. The page offers "continue" and "sign out" instead.
 
   return response;
 }

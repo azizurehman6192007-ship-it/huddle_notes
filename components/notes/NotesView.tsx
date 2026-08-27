@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { Ledger } from "@/components/ledger/Ledger";
 import { EditableText } from "@/components/notes/EditableText";
 import { SendSheet, type Recipient } from "@/components/notes/SendSheet";
-import { Button } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { Card, CardLabel, CardList } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { cx } from "@/lib/util/cx";
@@ -42,6 +44,11 @@ export function NotesView(props: NotesViewProps) {
   const [items, setItems] = useState<ActionItemView[]>(props.actionItems);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [newTask, setNewTask] = useState("");
+  const [addingItem, setAddingItem] = useState(false);
+  /** The item awaiting confirmation, so the sheet can name it. */
+  const [pendingDelete, setPendingDelete] = useState<ActionItemView | null>(null);
+  const [deletingItem, setDeletingItem] = useState(false);
 
   const sent = props.status === "sent";
 
@@ -88,6 +95,78 @@ export function NotesView(props: NotesViewProps) {
       .from("meetings")
       .update({ notes_edited: true })
       .eq("id", props.meetingId);
+  }
+
+  /** Marks the huddle as touched by a human. See persistNotes. */
+  async function markEdited() {
+    await supabase
+      .from("meetings")
+      .update({ notes_edited: true })
+      .eq("id", props.meetingId);
+  }
+
+  /**
+   * The model misses things a person remembers. Added items are unassigned
+   * on purpose — the owner picker is right there, and an invented owner is
+   * exactly what §1 forbids.
+   */
+  async function addItem(event: React.FormEvent) {
+    event.preventDefault();
+
+    const task = newTask.trim();
+    if (!task) return;
+
+    setAddingItem(true);
+    const { data, error } = await supabase
+      .from("action_items")
+      .insert({
+        meeting_id: props.meetingId,
+        task,
+        owner_member_id: null,
+        owner_name_raw: null,
+        owner_confidence: "low",
+        due_date: null,
+      })
+      .select("id, task, due_date, owner_member_id, owner_name_raw")
+      .single();
+    setAddingItem(false);
+
+    if (error || !data) {
+      toast.show("Couldn't add that item. Try again.", "error");
+      return;
+    }
+
+    setItems((current) => [
+      ...current,
+      {
+        id: data.id,
+        task: data.task,
+        dueDate: data.due_date,
+        ownerMemberId: data.owner_member_id,
+        ownerNameRaw: data.owner_name_raw,
+      },
+    ]);
+    setNewTask("");
+    await markEdited();
+  }
+
+  async function deleteItem(target: ActionItemView) {
+    setDeletingItem(true);
+    const { error } = await supabase
+      .from("action_items")
+      .delete()
+      .eq("id", target.id);
+    setDeletingItem(false);
+
+    if (error) {
+      toast.show("Couldn't remove that item. Try again.", "error");
+      return;
+    }
+
+    setItems((current) => current.filter((item) => item.id !== target.id));
+    setPendingDelete(null);
+    toast.show("Action item removed", "ok");
+    await markEdited();
   }
 
   async function send() {
@@ -223,7 +302,8 @@ export function NotesView(props: NotesViewProps) {
         {items.length === 0 ? (
           <Card padding="base">
             <p className="text-sm text-ink-2">
-              No action items came out of this huddle.
+              No action items came out of this huddle. Add one below if
+              something was agreed that the notes missed.
             </p>
           </Card>
         ) : (
@@ -281,17 +361,52 @@ export function NotesView(props: NotesViewProps) {
                   )}
                 </div>
 
-                <EditableText
-                  value={item.task}
-                  ariaLabel="Task"
-                  multiline
-                  className="mt-1 text-sm"
-                  onSave={(task) => void patchItem(item.id, { task })}
-                />
+                <div className="mt-1 flex items-start gap-1">
+                  <div className="min-w-0 flex-1">
+                    <EditableText
+                      value={item.task}
+                      ariaLabel="Task"
+                      multiline
+                      className="text-sm"
+                      onSave={(task) => void patchItem(item.id, { task })}
+                    />
+                  </div>
+                  <IconButton
+                    label={`Remove action item: ${item.task}`}
+                    onClick={() => setPendingDelete(item)}
+                    className="-mr-1 size-8 hover:text-live"
+                  >
+                    <span aria-hidden className="text-lg leading-none">
+                      ×
+                    </span>
+                  </IconButton>
+                </div>
               </li>
             ))}
           </CardList>
         )}
+
+        <form onSubmit={addItem} noValidate className="mt-3 flex items-end gap-2">
+          <div className="flex-1">
+            <Input
+              label="Add an action item"
+              value={newTask}
+              maxLength={200}
+              placeholder="What needs doing, and by whom"
+              onChange={(event) => setNewTask(event.target.value)}
+            />
+          </div>
+          {/* items-end on the form lines this up with the field's bottom
+              edge; no magic offset needed. */}
+          <Button
+            type="submit"
+            variant="tonal"
+            busy={addingItem}
+            disabled={!newTask.trim()}
+          >
+            Add
+          </Button>
+        </form>
       </section>
 
       {/* ------------------------------------------ decisions and questions */}
@@ -354,6 +469,21 @@ export function NotesView(props: NotesViewProps) {
           works either way.
         </p>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => pendingDelete && void deleteItem(pendingDelete)}
+        title="Remove this action item?"
+        confirmLabel="Remove item"
+        busyLabel="Removing…"
+        busy={deletingItem}
+      >
+        <p>
+          <span className="text-ink">{pendingDelete?.task}</span> comes off
+          these notes and won&apos;t be in the email.
+        </p>
+      </ConfirmDialog>
 
       <SendSheet
         open={sheetOpen}

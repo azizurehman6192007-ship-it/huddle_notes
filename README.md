@@ -10,12 +10,48 @@ The whole loop lives at `/`. Tap to record, tap to stop, it processes in place, 
 appear inline and editable, and Send emails them with the PDF attached. `/?h=<id>` pins
 an earlier huddle into the same screen.
 
-Working: magic-link auth, team + members CRUD, chunked recording, Groq transcription,
+Working: sign-in (**verification currently disabled — see below**), team + members CRUD, chunked recording, Groq transcription,
 Qwen notes (Zod-validated), owner matching, inline editing, watermarked PDF, Resend
 delivery with per-recipient logging and a delivery webhook.
 
+Editing and deleting: notes and action items are inline-editable, action items can be
+added and removed, the transcript is editable with an explicit save, huddles can be
+deleted (lead only, with a confirm sheet, and Storage is swept too), and team members
+can be added, edited and removed. Every delete goes through a confirmation sheet.
+
 Not built, by design (`CLAUDE.md` §12, Phase 4): tap-to-tag speaker segments, retry on
 failure, audio retention cron, carrying action items into the next huddle, search.
+
+---
+
+## ⚠️ Auth is switched off
+
+**Sign-in does not verify anything.** Type any email address, press Continue, and you
+are that person — no magic link, no OTP, no password, no OAuth. Typing a colleague's
+address logs you in as them and shows you their team's huddles, transcripts and notes.
+
+This was done deliberately so internal testing doesn't round-trip through email while
+the product is being built. `/api/auth/dev-signin` mints a genuine Supabase session with
+the admin API (`createUser` → `generateLink` → `verifyOtp`) without sending mail, so RLS,
+`auth.uid()` and `create_team()` all still behave exactly as they do under real auth.
+
+**Before this is used with real external users, or with anything confidential:**
+
+1. Delete `app/api/auth/dev-signin/route.ts`.
+2. Restore verification in `app/(auth)/login/LoginForm.tsx` — either
+   `supabase.auth.signInWithOtp({ email })` (the magic-link/OTP flow this replaced;
+   `app/auth/callback/route.ts` and `app/(auth)/login/authError.ts` are still in the
+   tree and still work), or `supabase.auth.signInWithOAuth({ provider: "google" })`.
+3. Leave `PUBLIC_PATHS` in `middleware.ts` as it is — `/api/auth` still needs to be
+   public for `/api/auth/signout`.
+
+As a backstop, the bypass **fails closed in production**: with `NODE_ENV=production` it
+returns 403 unless `ALLOW_UNVERIFIED_SIGNIN=true` is set explicitly. An accidental
+deploy will not silently ship an open login.
+
+There is no data migration to undo — `members.email` is the join in both flows.
+
+---
 
 ## Setup
 
@@ -51,6 +87,7 @@ cp .env.example .env.local
 | `RESEND_API_KEY` | resend.com → API keys |
 | `EMAIL_FROM` | a verified sender on your Resend domain, e.g. `Huddle <notes@yourdomain.com>` |
 | `RESEND_WEBHOOK_SECRET` | another random string; guards the delivery webhook |
+| `ALLOW_UNVERIFIED_SIGNIN` | only read when `NODE_ENV=production`. See the auth warning above |
 
 Without `RESEND_API_KEY` and `EMAIL_FROM` everything still works except Send, which
 the notes screen disables and explains rather than failing at the last step.
@@ -60,8 +97,9 @@ To get delivery and bounce status, add a webhook in Resend pointing at
 
 ### 3. Auth redirect
 
-In Supabase → Authentication → URL Configuration, add
-`http://localhost:3000/auth/callback` to the redirect allow-list.
+Not needed while unverified sign-in is on — nothing is emailed. When verification is
+restored, add `http://localhost:3000/auth/callback` to Supabase → Authentication →
+URL Configuration → Redirect URLs.
 
 ### 4. Run
 
@@ -70,7 +108,8 @@ npm install
 npm run dev
 ```
 
-Sign in, create a team, add the people who join the standup, then start a huddle.
+Enter any email, create a team, add the people who join the standup, then start a
+huddle. Sign out from the team screen to test as someone else.
 
 ## The worker
 

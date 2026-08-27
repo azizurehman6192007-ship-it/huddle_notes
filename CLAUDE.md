@@ -616,3 +616,48 @@ Decisions made while building that §1–§14 did not specify. Keep this section
 - **Send is partial-success tolerant.** One bad address does not block the rest; the
   meeting still flips to `sent` and the failures come back to the UI by name.
 - **Extra columns beyond §4**: `meetings.sent_at`, `meetings.sent_count`.
+
+### Added after Phase 3 — auth verification removed (temporary)
+
+- **⚠️ Sign-in no longer verifies anything.** §2 says magic link; that is switched off.
+  `/api/auth/dev-signin` takes an email and mints a session for it with no proof of
+  ownership. This is internal-testing scaffolding, not a design decision — README.md
+  has the reversal steps, and it fails closed under `NODE_ENV=production` unless
+  `ALLOW_UNVERIFIED_SIGNIN=true`.
+- **Why a real session, not our own cookie.** Every page and route reads through RLS,
+  and the predicates key off `auth.jwt() ->> 'email'`. The bypass goes
+  `admin.createUser` → `admin.generateLink` (which sends no mail) → `verifyOtp`, so the
+  session is genuine and RLS, `auth.uid()`, `created_by` and `create_team()` are
+  untouched. Restoring verification is a change to one file.
+- **The "every email showed the same dashboard" bug.** Not a data-scoping fault:
+  `signInWithOtp` never created a session, nothing in the app ever called `signOut`, and
+  middleware bounced signed-in users off `/login`. So the first session a browser ever
+  got answered for everyone. Fixed by signing out before minting, adding
+  `/api/auth/signout`, and letting `/login` render while signed in.
+
+### Added after Phase 3 — edit and delete
+
+- **`ConfirmDialog` is the one gate.** Built on `Sheet` so it inherits the focus trap,
+  Escape and scroll lock. Every destructive action goes through it: delete a huddle,
+  remove an action item, remove a member. Cancel is first in DOM order, so it takes
+  focus when the sheet opens and an accidental Enter is harmless.
+- **Deleting a huddle** is `DELETE /api/meetings/[id]`. RLS decides (the policy is
+  lead-only), row deletion cascades, and Storage — which does not cascade — is swept
+  for `{id}/chunks/*`, the concatenated audio and the PDF. Refused while `uploading` or
+  `processing`, because the worker still holds that row. Lead-only in the UI too, so
+  nobody is shown a button that always 403s.
+- **The transcript is editable, with explicit save.** Not blur-to-save like the notes
+  fields: a mis-click on a textarea holding twelve minutes of speech is silent data
+  loss with no undo behind it. Editing it does *not* re-run notes — "generate notes
+  from this transcript" is the existing action for that.
+- **Action items can be added and removed**, not just edited. Added ones are always
+  unassigned: the model inventing an owner is what §1 forbids, and a human guessing one
+  through the UI is the same failure with a nicer label.
+- **Members are editable in place** (name and email) and removal is a soft delete —
+  `active = false`. `action_items.owner_member_id` and `speaker_segments.member_id`
+  point at these rows, so hard-deleting would orphan every past huddle. You cannot
+  remove yourself.
+- **Known gap:** the PDF is rendered once by the worker and served from Storage, so
+  edits made after processing are in the emailed HTML body but not in the attachment.
+  Pre-existing, and untouched here — re-rendering on send is Phase 4 work.
+

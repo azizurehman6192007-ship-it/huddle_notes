@@ -2,7 +2,12 @@ import type { CSSProperties, ReactNode } from "react";
 import { cx } from "@/lib/util/cx";
 
 export interface LedgerRowProps {
-  name: string;
+  /**
+   * Usually the person's name. Accepts a node so the team screen can make it
+   * editable in place without a second row geometry — the layout is the point
+   * of this component, and it stays identical either way.
+   */
+  name: ReactNode;
   /** Mono content on the right: a duration, a count, a state word. */
   trailing?: ReactNode;
   /** Amber left edge — reserved for the live and the actionable. */
@@ -55,7 +60,9 @@ export function LedgerRow({
       <span className="flex items-center justify-between gap-3">
         <span
           className={cx(
-            "truncate",
+            // Only clamp real text — an element in this slot brings its own
+            // box, and clipping it would cut off a focus ring.
+            typeof name === "string" ? "truncate" : "min-w-0 flex-1",
             active ? "font-display text-base tracking-wide uppercase" : "text-base",
           )}
         >
