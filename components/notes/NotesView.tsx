@@ -6,7 +6,6 @@ import { EditableText } from "@/components/notes/EditableText";
 import { SendSheet, type Recipient } from "@/components/notes/SendSheet";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Card, CardLabel, CardList } from "@/components/ui/Card";
-import { Input } from "@/components/ui/Input";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
@@ -30,6 +29,8 @@ export interface NotesViewProps {
   members: { id: string; name: string }[];
   recipients: Recipient[];
   emailConfigured: boolean;
+  /** Names only, never values — safe to render. */
+  emailProblems: string[];
   sentCount: number | null;
 }
 
@@ -42,8 +43,6 @@ export function NotesView(props: NotesViewProps) {
   const [items, setItems] = useState<ActionItemView[]>(props.actionItems);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sending, setSending] = useState(false);
-  const [newTask, setNewTask] = useState("");
-  const [addingItem, setAddingItem] = useState(false);
   /** The item awaiting confirmation, so the sheet can name it. */
   const [pendingDelete, setPendingDelete] = useState<ActionItemView | null>(null);
   const [deletingItem, setDeletingItem] = useState(false);
@@ -101,49 +100,6 @@ export function NotesView(props: NotesViewProps) {
       .from("meetings")
       .update({ notes_edited: true })
       .eq("id", props.meetingId);
-  }
-
-  /**
-   * The model misses things a person remembers. Added items are unassigned
-   * on purpose — the owner picker is right there, and an invented owner is
-   * exactly what §1 forbids.
-   */
-  async function addItem(event: React.FormEvent) {
-    event.preventDefault();
-
-    const task = newTask.trim();
-    if (!task) return;
-
-    setAddingItem(true);
-    const { data, error } = await supabase
-      .from("action_items")
-      .insert({
-        meeting_id: props.meetingId,
-        task,
-        owner_member_id: null,
-        owner_name_raw: null,
-        owner_confidence: "low",
-      })
-      .select("id, task, owner_member_id, owner_name_raw")
-      .single();
-    setAddingItem(false);
-
-    if (error || !data) {
-      toast.show("Couldn't add that item. Try again.", "error");
-      return;
-    }
-
-    setItems((current) => [
-      ...current,
-      {
-        id: data.id,
-        task: data.task,
-        ownerMemberId: data.owner_member_id,
-        ownerNameRaw: data.owner_name_raw,
-      },
-    ]);
-    setNewTask("");
-    await markEdited();
   }
 
   async function deleteItem(target: ActionItemView) {
@@ -260,8 +216,7 @@ export function NotesView(props: NotesViewProps) {
 
             {items.length === 0 ? (
               <p className="text-sm text-ink-2">
-                No action items came out of this huddle. Add one below if
-                something was agreed that the notes missed.
+                No action items came out of this huddle.
               </p>
             ) : (
               <ul className="-mx-1">
@@ -333,25 +288,6 @@ export function NotesView(props: NotesViewProps) {
               </ul>
             )}
 
-            <form onSubmit={addItem} noValidate className="mt-4 flex items-end gap-2">
-              <div className="flex-1">
-                <Input
-                  label="Add an action item"
-                  value={newTask}
-                  maxLength={200}
-                  placeholder="What needs doing, and by whom"
-                  onChange={(event) => setNewTask(event.target.value)}
-                />
-              </div>
-              <Button
-                type="submit"
-                variant="tonal"
-                busy={addingItem}
-                disabled={!newTask.trim()}
-              >
-                Add
-              </Button>
-            </form>
           </div>
         </Card>
       </section>
@@ -412,11 +348,25 @@ export function NotesView(props: NotesViewProps) {
         </Button>
       </div>
 
-      {!props.emailConfigured && (
-        <p className="-mt-4 text-sm text-ink-3">
-          Sending is off until RESEND_API_KEY and EMAIL_FROM are set. The PDF
-          works either way.
-        </p>
+      {props.emailProblems.length > 0 && (
+        <div className="-mt-4 text-sm text-ink-3">
+          <p>
+            {props.emailConfigured
+              ? "Sending is on, but something looks off:"
+              : "Sending is off. On this deployment:"}
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {props.emailProblems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+          {!props.emailConfigured && (
+            <p className="mt-1">
+              Set them for this environment and redeploy. The PDF works either
+              way.
+            </p>
+          )}
+        </div>
       )}
 
       <ConfirmDialog

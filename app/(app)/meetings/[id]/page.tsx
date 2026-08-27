@@ -11,7 +11,7 @@ import { DeleteHuddle } from "@/components/huddle/DeleteHuddle";
 import { TranscriptEditor } from "@/components/transcript/TranscriptEditor";
 import { NotesView } from "@/components/notes/NotesView";
 import { NotesSchema } from "@/lib/ai/schema";
-import { isEmailConfigured } from "@/lib/email/resend";
+import { emailConfigStatus } from "@/lib/email/resend";
 import {
   formatDayLabel,
   formatDuration,
@@ -31,6 +31,7 @@ export default async function MeetingDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const emailConfig = emailConfigStatus();
   const { id } = await params;
   const { team, member } = await requireMembership();
 
@@ -158,7 +159,8 @@ export default async function MeetingDetailPage({
                 name: member.name,
                 email: member.email,
               }))}
-            emailConfigured={isEmailConfigured()}
+            emailConfigured={emailConfig.configured}
+            emailProblems={emailConfig.problems}
             sentCount={meeting.sent_count}
           />
         )}

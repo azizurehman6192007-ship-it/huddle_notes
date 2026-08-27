@@ -121,7 +121,50 @@ export async function sendNotes(input: {
   return results;
 }
 
+export interface EmailConfigStatus {
+  /** Both variables present. Send is enabled only when this is true. */
+  configured: boolean;
+  /**
+   * Human-readable problems, NAMES ONLY — never values. Rendered on the notes
+   * screen, so a secret must never end up in here.
+   */
+  problems: string[];
+}
+
+/**
+ * Why this reports detail rather than a bare boolean: the old message named
+ * both variables whatever was actually wrong, so a deployment with one of them
+ * missing (or set on the wrong Vercel environment) looked identical to one
+ * with neither, and there was no way to tell from the running site.
+ *
+ * Note there is no format requirement on EMAIL_FROM. Resend accepts both
+ * `notes@example.com` and `Huddle <notes@example.com>`; anything non-empty
+ * enables Send, and the provider has the final say.
+ *
+ * Read at request time — the pages that call it are `force-dynamic`, so this
+ * reflects the running environment, not the build.
+ */
+export function emailConfigStatus(): EmailConfigStatus {
+  const key = process.env.RESEND_API_KEY?.trim() ?? "";
+  const from = process.env.EMAIL_FROM?.trim() ?? "";
+
+  const problems: string[] = [];
+
+  if (!key) problems.push("RESEND_API_KEY isn't set");
+  else if (!key.startsWith("re_")) {
+    // A warning, not a blocker — the provider decides what is valid.
+    problems.push("RESEND_API_KEY doesn't start with re_, so it may be wrong");
+  }
+
+  if (!from) problems.push("EMAIL_FROM isn't set");
+  else if (!from.includes("@")) {
+    problems.push("EMAIL_FROM has no @ in it, so it isn't an address");
+  }
+
+  return { configured: Boolean(key && from), problems };
+}
+
 /** True when email is configured at all — the UI hides Send otherwise. */
 export function isEmailConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+  return emailConfigStatus().configured;
 }
