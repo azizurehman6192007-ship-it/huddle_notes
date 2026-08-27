@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { CardLabel, CardList } from "@/components/ui/Card";
-import { DeleteHuddle } from "@/components/huddle/DeleteHuddle";
 import {
   formatDayLabel,
   formatDuration,
@@ -26,14 +25,7 @@ export type ListedMeeting = Pick<
  * the page loads the last 60 huddles in one query — so this filters the list
  * that is on screen rather than going back to the server for each keystroke.
  */
-export function HuddleBrowser({
-  rows,
-  canDelete,
-}: {
-  rows: ListedMeeting[];
-  /** Deleting is lead-only in RLS, so don't offer it to anyone else. */
-  canDelete: boolean;
-}) {
+export function HuddleBrowser({ rows }: { rows: ListedMeeting[] }) {
   const [query, setQuery] = useState("");
 
   // Each row gets one lowercase haystack covering every way someone might
@@ -117,7 +109,7 @@ export function HuddleBrowser({
           </Button>
         </div>
       ) : (
-        <HuddleGroups rows={matches} canDelete={canDelete} />
+        <HuddleGroups rows={matches} />
       )}
     </div>
   );
@@ -136,13 +128,7 @@ function tokenMatcher(token: string): (haystack: string) => boolean {
   return (haystack) => pattern.test(haystack);
 }
 
-function HuddleGroups({
-  rows,
-  canDelete,
-}: {
-  rows: ListedMeeting[];
-  canDelete: boolean;
-}) {
+function HuddleGroups({ rows }: { rows: ListedMeeting[] }) {
   const now = new Date();
   const groups: { label: string; meetings: ListedMeeting[] }[] = [];
 
@@ -162,14 +148,14 @@ function HuddleGroups({
             {group.meetings.map((meeting) => (
               <li
                 key={meeting.id}
-                className="flex items-center border-b border-hairline last:border-b-0"
+                className="border-b border-hairline last:border-b-0"
               >
-                {/* Delete sits beside the link, not inside it: a button nested
-                    in an anchor is invalid, and a stray tap must never both
-                    navigate and open a destructive sheet. */}
+                {/* The whole row is the link again. Deleting lives on the
+                    huddle's own page — a destructive control one stray tap
+                    away from a list of recordings is not worth the shortcut. */}
                 <Link
                   href={`/meetings/${meeting.id}`}
-                  className="state-layer flex min-h-16 min-w-0 flex-1 items-center justify-between gap-3 py-3.5 pl-4 pr-3 sm:pl-5"
+                  className="state-layer flex min-h-16 items-center justify-between gap-3 px-4 py-3.5 sm:px-5"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-ink">
@@ -189,18 +175,6 @@ function HuddleGroups({
                     </span>
                   </span>
                 </Link>
-
-                {canDelete && (
-                  <span className="shrink-0 pr-2 sm:pr-3">
-                    <DeleteHuddle
-                      meetingId={meeting.id}
-                      title={meeting.title}
-                      dayLabel={formatDayLabel(
-                        parseDateOnly(meeting.meeting_date),
-                      )}
-                    />
-                  </span>
-                )}
               </li>
             ))}
           </CardList>

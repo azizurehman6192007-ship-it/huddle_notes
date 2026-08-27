@@ -17,7 +17,6 @@ export interface EmailInput {
   actionItems: {
     task: string;
     ownerName: string | null;
-    due: string | null;
     unassigned: boolean;
   }[];
   /** Link back to the huddle in the app. */
@@ -27,6 +26,10 @@ export interface EmailInput {
 /**
  * §10. The summary and action items are inline, because most people read this
  * on a phone and will never open the attachment. The PDF is for the record.
+ *
+ * Per-person updates and blockers are deliberately absent. The notes screen no
+ * longer shows them, and §1 is explicit that a human reviews what goes out —
+ * emailing a section the lead cannot see or correct breaks that promise.
  */
 export function buildNotesEmail(input: EmailInput): EmailContent {
   const dayLabel = formatDayLabel(parseDateOnly(input.meetingDate));
@@ -54,24 +57,11 @@ function renderHtml(input: EmailInput, dayLabel: string): string {
       const owner = item.unassigned
         ? '<span style="color:#C87A16;font-weight:600">Unassigned</span>'
         : escapeHtml(item.ownerName ?? "");
-      const due = item.due
-        ? escapeHtml(formatDayLabel(parseDateOnly(item.due)))
-        : "—";
       return `<tr>
         <td style="padding:8px 12px;border-top:1px solid #D6DAE4;font-size:14px;color:#171A2E;white-space:nowrap">${owner}</td>
         <td style="padding:8px 12px;border-top:1px solid #D6DAE4;font-size:14px;color:#171A2E">${escapeHtml(item.task)}</td>
-        <td style="padding:8px 12px;border-top:1px solid #D6DAE4;font-size:13px;color:#5B6178;white-space:nowrap">${due}</td>
       </tr>`;
     })
-    .join("");
-
-  const blockerBlock = notes.blockers
-    .map(
-      (blocker) => `<p style="margin:0 0 8px;font-size:14px;color:#171A2E">
-        <strong>${escapeHtml(blocker.person)}</strong> — ${escapeHtml(blocker.issue)}
-        ${blocker.needs ? `<br><span style="color:#5B6178">Needs: ${escapeHtml(blocker.needs)}</span>` : ""}
-      </p>`,
-    )
     .join("");
 
   const section = (heading: string, body: string) =>
@@ -98,8 +88,6 @@ function renderHtml(input: EmailInput, dayLabel: string): string {
         ? `<table style="width:100%;border-collapse:collapse">${actionRows}</table>`
         : "",
     )}
-
-    ${section("Blockers", blockerBlock)}
 
     ${section(
       "Decisions",
@@ -131,18 +119,7 @@ function renderText(input: EmailInput, dayLabel: string): string {
     lines.push("ACTION ITEMS");
     for (const item of input.actionItems) {
       const owner = item.unassigned ? "Unassigned" : (item.ownerName ?? "");
-      const due = item.due ? ` (due ${formatDayLabel(parseDateOnly(item.due))})` : "";
-      lines.push(`- ${owner}: ${item.task}${due}`);
-    }
-    lines.push("");
-  }
-
-  if (notes.blockers.length) {
-    lines.push("BLOCKERS");
-    for (const blocker of notes.blockers) {
-      lines.push(
-        `- ${blocker.person}: ${blocker.issue}${blocker.needs ? ` (needs: ${blocker.needs})` : ""}`,
-      );
+      lines.push(`- ${owner}: ${item.task}`);
     }
     lines.push("");
   }

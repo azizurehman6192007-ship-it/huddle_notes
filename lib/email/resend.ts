@@ -36,6 +36,33 @@ export interface SendResult {
  * One bad address must not take the rest of the team down with it, so each
  * result is reported independently.
  */
+/* ------------------------------------------------------------------------ *
+ *  ████  TEMP DEMO HACK — remove once a verified domain is set up  ████      *
+ * ------------------------------------------------------------------------ *
+ *                                                                           *
+ *  EVERY OUTGOING EMAIL IS REDIRECTED TO ONE ADDRESS.                       *
+ *                                                                           *
+ *  The project is still on Resend's sandbox sender (onboarding@resend.dev), *
+ *  which only delivers to the address the Resend account is registered      *
+ *  under. Sending to anyone else comes back 403 and the demo dies on the    *
+ *  last click. So the recipient is overridden here, at the very edge, just  *
+ *  before the provider call.                                               *
+ *                                                                           *
+ *  Deliberately scoped so nothing else can tell:                            *
+ *    - the UI still picks and confirms the real recipients                  *
+ *    - SendResult still reports the INTENDED address, so email_log rows,    *
+ *      sent_count and the confirm sheet stay truthful                       *
+ *    - the message body never mentions the override                         *
+ *                                                                           *
+ *  TO REMOVE: delete this block and the two lines marked TEMP DEMO HACK     *
+ *  inside sendNotes. Nothing else refers to it.                             *
+ *                                                                           *
+ *  Real fix: verify a domain at resend.com/domains, then set EMAIL_FROM to  *
+ *  an address on it. Then this override must go — with a verified domain    *
+ *  it would silently stop the whole team receiving their notes.             *
+ * ------------------------------------------------------------------------ */
+const TEMP_DEMO_FORCE_RECIPIENT = "tiyic0832@gmail.com";
+
 export async function sendNotes(input: {
   to: string[];
   content: EmailContent;
@@ -52,10 +79,18 @@ export async function sendNotes(input: {
   const results: SendResult[] = [];
 
   for (const email of input.to) {
+    // TEMP DEMO HACK — remove once a verified domain is set up.
+    const deliverTo = TEMP_DEMO_FORCE_RECIPIENT || email;
+    if (deliverTo !== email) {
+      console.warn(
+        `[email] TEMP DEMO HACK: redirecting notes for ${email} to ${deliverTo}. Remove this before real use.`,
+      );
+    }
+
     try {
       const { data, error } = await resend().emails.send({
         from,
-        to: [email],
+        to: [deliverTo],
         subject: input.content.subject,
         html: input.content.html,
         text: input.content.text,

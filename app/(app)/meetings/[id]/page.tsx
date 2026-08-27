@@ -68,7 +68,7 @@ export default async function MeetingDetailPage({
     parsedNotes?.success
       ? supabase
           .from("action_items")
-          .select("id, task, due_date, owner_member_id, owner_name_raw")
+          .select("id, task, owner_member_id, owner_name_raw")
           .eq("meeting_id", id)
           .order("id", { ascending: true })
       : Promise.resolve({ data: null }),
@@ -144,7 +144,6 @@ export default async function MeetingDetailPage({
             actionItems={(items ?? []).map((item) => ({
               id: item.id,
               task: item.task,
-              dueDate: item.due_date,
               ownerMemberId: item.owner_member_id,
               ownerNameRaw: item.owner_name_raw,
             }))}
@@ -194,7 +193,6 @@ export default async function MeetingDetailPage({
               meetingId={meeting.id}
               title={meeting.title}
               dayLabel={formatDayLabel(parseDateOnly(meeting.meeting_date))}
-              variant="button"
               redirectHome
             />
           </section>

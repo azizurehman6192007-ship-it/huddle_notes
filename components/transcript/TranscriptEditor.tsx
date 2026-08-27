@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Card, CardLabel } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -39,6 +40,7 @@ export function TranscriptEditor({
   const [draft, setDraft] = useState(transcript ?? "");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
 
   // A refresh after the worker finishes must not be overwritten by stale
@@ -95,6 +97,33 @@ export function TranscriptEditor({
     setEditing(false);
   }
 
+  /**
+   * Clears the text but keeps the huddle. The audio is already gone by
+   * retention or still in storage either way — this is about the transcript
+   * being wrong or sensitive, not about deleting the meeting, which is a
+   * separate action further down the page.
+   */
+  async function remove() {
+    setBusy(true);
+    const { error } = await supabase
+      .from("meetings")
+      .update({ transcript: null })
+      .eq("id", meetingId);
+    setBusy(false);
+
+    if (error) {
+      toast.show("Couldn't delete the transcript. Try again.", "error");
+      return;
+    }
+
+    setSaved("");
+    setDraft("");
+    setConfirmDelete(false);
+    setEditing(false);
+    toast.show("Transcript deleted", "ok");
+    router.refresh();
+  }
+
   return (
     <section>
       <CardLabel
@@ -106,14 +135,19 @@ export function TranscriptEditor({
               </span>
             )}
             {editable && !editing && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="-mr-3"
-                onClick={() => setEditing(true)}
-              >
-                Edit
-              </Button>
+              <span className="-mr-3 flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="hover:text-live"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  Delete
+                </Button>
+              </span>
             )}
           </span>
         }
@@ -154,6 +188,26 @@ export function TranscriptEditor({
           <p className="text-ink-2">{placeholder}</p>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={() => void remove()}
+        title="Delete this transcript?"
+        confirmLabel="Delete transcript"
+        busy={busy}
+      >
+        <p>
+          The transcript of{" "}
+          <span className="text-ink">{wordCount} words</span> is removed from
+          this huddle. This can&apos;t be undone.
+        </p>
+        <p className="mt-2 text-sm text-ink-3">
+          The notes above stay as they are — but without a transcript they
+          can&apos;t be regenerated, and nothing will be left to check them
+          against.
+        </p>
+      </ConfirmDialog>
     </section>
   );
 }

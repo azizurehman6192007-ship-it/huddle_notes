@@ -1,16 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Input";
+import { Input } from "@/components/ui/Input";
+import { parseRoster, nameFromEmail, type RosterEntry } from "@/lib/team/roster";
 import { Card, CardLabel, CardList } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EditableText } from "@/components/notes/EditableText";
 import { useToast } from "@/components/ui/Toast";
+import { cx } from "@/lib/util/cx";
 import { LedgerRow } from "@/components/ledger/LedgerRow";
-import type { MemberRow, TeamRow, TranscribeLanguage } from "@/lib/supabase/types";
+import type { MemberRow, TeamRow } from "@/lib/supabase/types";
 
 /**
  * Deliberately boring — it is visited twice ever. The only thing that has to
@@ -35,6 +37,13 @@ export function TeamManager({
   const [email, setEmail] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+
+  const [bulkText, setBulkText] = useState("");
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Parsed as you type, so the button can say how many will actually land.
+  const parsedBulk = useMemo(() => parseRoster(bulkText), [bulkText]);
   /** The member awaiting confirmation, so the sheet can name them. */
   const [pendingRemove, setPendingRemove] = useState<MemberRow | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -45,33 +54,138 @@ export function TeamManager({
     startTransition(() => router.refresh());
   }
 
+  interface CommitResult {
+    added: number;
+    restored: number;
+    /** Already on the team and active — not an error, just nothing to do. */
+    skipped: string[];
+  }
+
+  /**
+   * The one path into `members`, shared by the single form and the bulk field,
+   * so both behave identically about duplicates and previously-removed people.
+   *
+   * Removal is a soft delete (`active = false`), so re-adding that address
+   * would collide with `unique (team_id, email)`. Reactivating instead is what
+   * the remove confirmation already promises ("adding them again later
+   * restores them"), and it keeps their past action items attached.
+   */
+  async function commitMembers(entries: RosterEntry[]): Promise<CommitResult | null> {
+    const byEmail = new Map(members.map((m) => [m.email.toLowerCase(), m]));
+
+    const fresh: RosterEntry[] = [];
+    const restore: string[] = [];
+    const skipped: string[] = [];
+
+    for (const entry of entries) {
+      const existing = byEmail.get(entry.email);
+      if (!existing) fresh.push(entry);
+      else if (existing.active) skipped.push(entry.email);
+      // Keep the name they already had — it is what past huddles attribute to.
+      else restore.push(existing.id);
+    }
+
+    if (restore.length > 0) {
+      const { error } = await supabase
+        .from("members")
+        .update({ active: true })
+        .in("id", restore);
+      if (error) return null;
+    }
+
+    if (fresh.length > 0) {
+      const { error } = await supabase.from("members").insert(
+        fresh.map((entry) => ({
+          team_id: team.id,
+          name: entry.name,
+          email: entry.email,
+        })),
+      );
+      if (error) return null;
+    }
+
+    return { added: fresh.length, restored: restore.length, skipped };
+  }
+
   async function addMember(event: React.FormEvent) {
     event.preventDefault();
     setAddError(null);
 
-    const cleanName = name.trim();
     const cleanEmail = email.trim().toLowerCase();
+    // Name is optional here now: the bulk field derives one, and it would be
+    // odd for the single form to be stricter than pasting the same address.
+    const cleanName = name.trim() || nameFromEmail(cleanEmail);
 
-    if (!cleanName) return setAddError("A name is needed — it appears in the notes.");
-    if (!cleanEmail.includes("@")) return setAddError("That doesn't look like an email address.");
-    if (members.some((m) => m.email.toLowerCase() === cleanEmail)) {
+    if (!cleanEmail.includes("@")) {
+      return setAddError("That doesn't look like an email address.");
+    }
+    if (members.some((m) => m.active && m.email.toLowerCase() === cleanEmail)) {
       return setAddError(`${cleanEmail} is already on the team.`);
     }
 
     setAdding(true);
-    const { error } = await supabase
-      .from("members")
-      .insert({ team_id: team.id, name: cleanName, email: cleanEmail });
+    const result = await commitMembers([{ name: cleanName, email: cleanEmail }]);
     setAdding(false);
 
-    if (error) {
+    if (!result) {
       setAddError("Couldn't add them. Try again in a moment.");
       return;
     }
 
     setName("");
     setEmail("");
-    toast.show(`${cleanName} added`, "ok");
+    toast.show(
+      result.restored > 0 ? `${cleanName} is back on the team` : `${cleanName} added`,
+      "ok",
+    );
+    refresh();
+  }
+
+  async function addBulk(event: React.FormEvent) {
+    event.preventDefault();
+    setBulkError(null);
+
+    const { entries, invalid } = parseRoster(bulkText);
+
+    if (entries.length === 0) {
+      setBulkError(
+        invalid.length > 0
+          ? `Nothing there looked like an email address. Check: ${invalid.slice(0, 3).join(", ")}`
+          : "Paste the email addresses, one per line or separated by commas.",
+      );
+      return;
+    }
+
+    setBulkBusy(true);
+    const result = await commitMembers(entries);
+    setBulkBusy(false);
+
+    if (!result) {
+      setBulkError("Couldn't add them. Try again in a moment.");
+      return;
+    }
+
+    setBulkText("");
+
+    // Say exactly what happened to every address that was pasted — a silent
+    // partial success is how someone ends up missing from the notes.
+    const done = result.added + result.restored;
+    const parts: string[] = [];
+    if (done > 0) parts.push(`${done} ${done === 1 ? "person" : "people"} added`);
+    if (result.skipped.length > 0) {
+      parts.push(`${result.skipped.length} already on the team`);
+    }
+    if (invalid.length > 0) {
+      parts.push(`${invalid.length} not an email address`);
+    }
+
+    toast.show(parts.join(" · ") || "Nothing to add", done > 0 ? "ok" : "neutral");
+
+    if (invalid.length > 0) {
+      setBulkError(`Skipped, not an email address: ${invalid.join(", ")}`);
+      setBulkText(invalid.join("\n"));
+    }
+
     refresh();
   }
 
@@ -153,16 +267,6 @@ export function TeamManager({
 
     setPendingRemove(null);
     toast.show(`${target.name} removed`, "ok");
-    refresh();
-  }
-
-  async function updateTeam(patch: Partial<TeamRow>) {
-    const { error } = await supabase.from("teams").update(patch).eq("id", team.id);
-    if (error) {
-      toast.show("Couldn't save that. Try again.", "error");
-      return;
-    }
-    toast.show("Saved", "ok");
     refresh();
   }
 
@@ -271,6 +375,7 @@ export function TeamManager({
               value={name}
               maxLength={80}
               onChange={(event) => setName(event.target.value)}
+              hint="Optional — we'll use the email address if you leave it blank."
             />
             <Input
               label="Email"
@@ -290,38 +395,76 @@ export function TeamManager({
 
       {isLead && (
         <section>
-          <CardLabel>Settings</CardLabel>
-          <Card padding="loose" className="flex flex-col gap-5">
-            <Select
-              label="Spoken language"
-              defaultValue={team.transcribe_language}
-              onChange={(event) =>
-                void updateTeam({
-                  transcribe_language: event.target.value as TranscribeLanguage,
-                })
-              }
-              hint="Telling the transcriber the language up front makes it noticeably more accurate."
-            >
-              <option value="en">English</option>
-              <option value="ur">Urdu</option>
-              <option value="auto">Detect automatically</option>
-            </Select>
+          <CardLabel>Add several at once</CardLabel>
+          <Card
+            as="form"
+            onSubmit={addBulk}
+            noValidate
+            padding="loose"
+            className="flex flex-col gap-4"
+          >
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="bulk-roster"
+                className="text-sm font-medium text-ink-2"
+              >
+                Email addresses
+              </label>
+              <textarea
+                id="bulk-roster"
+                value={bulkText}
+                rows={4}
+                spellCheck={false}
+                placeholder={"ali@company.com, sara@company.com\nBilal Khan <bilal@company.com>"}
+                onChange={(event) => setBulkText(event.target.value)}
+                aria-describedby={bulkError ? "bulk-error" : "bulk-hint"}
+                aria-invalid={bulkError ? true : undefined}
+                className={cx(
+                  "w-full resize-y rounded-[var(--radius)] border bg-paper-raised p-3",
+                  "text-ink placeholder:text-ink-3",
+                  "transition-[border-color,box-shadow] duration-150 ease-[var(--ease)]",
+                  "hover:border-ink-3 focus:outline-none focus:ring-1",
+                  bulkError
+                    ? "border-live focus:border-live focus:ring-live"
+                    : "border-hairline focus:border-amber focus:ring-amber",
+                )}
+              />
+              {bulkError ? (
+                <p id="bulk-error" role="alert" className="pl-0.5 text-sm text-live">
+                  {bulkError}
+                </p>
+              ) : (
+                <p id="bulk-hint" className="pl-0.5 text-sm text-ink-3">
+                  One per line, or separated by commas. Paste straight from your
+                  mail client — names in angle brackets are kept.
+                </p>
+              )}
+            </div>
 
-            <Input
-              label="Watermark text"
-              defaultValue={team.watermark_text ?? "Confidential"}
-              maxLength={40}
-              onBlur={(event) => {
-                const value = event.target.value.trim();
-                if (value !== (team.watermark_text ?? "")) {
-                  void updateTeam({ watermark_text: value });
-                }
-              }}
-              hint="Printed across every page of the PDF."
-            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="submit"
+                variant="primary"
+                busy={bulkBusy}
+                disabled={parsedBulk.entries.length === 0}
+                className="self-start"
+              >
+                {parsedBulk.entries.length > 1
+                  ? `Add ${parsedBulk.entries.length} people`
+                  : "Add to team"}
+              </Button>
+              {parsedBulk.invalid.length > 0 && (
+                <p className="text-sm text-ink-3">
+                  {parsedBulk.invalid.length} line
+                  {parsedBulk.invalid.length === 1 ? "" : "s"} won&apos;t be
+                  added — not an email address.
+                </p>
+              )}
+            </div>
           </Card>
         </section>
       )}
+
 
       <ConfirmDialog
         open={pendingRemove !== null}

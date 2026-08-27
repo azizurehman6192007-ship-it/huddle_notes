@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Ledger } from "@/components/ledger/Ledger";
 import { EditableText } from "@/components/notes/EditableText";
 import { SendSheet, type Recipient } from "@/components/notes/SendSheet";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -12,14 +11,13 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { cx } from "@/lib/util/cx";
-import { formatDayLabel, parseDateOnly } from "@/lib/util/format";
+import { matchOwner } from "@/lib/notes/match";
 import type { Notes } from "@/lib/ai/schema";
 import type { ActionItemRow, MeetingStatus } from "@/lib/supabase/types";
 
 export interface ActionItemView {
   id: string;
   task: string;
-  dueDate: string | null;
   ownerMemberId: string | null;
   ownerNameRaw: string | null;
 }
@@ -64,7 +62,11 @@ export function NotesView(props: NotesViewProps) {
       .update({ notes_json: next, notes_edited: true })
       .eq("id", props.meetingId);
 
-    if (error) toast.show("Couldn't save that edit. Try again.", "error");
+    if (error) {
+      toast.show("Couldn't save that edit. Try again.", "error");
+      return false;
+    }
+    return true;
   }
 
   async function patchItem(id: string, patch: Partial<ActionItemView>) {
@@ -74,7 +76,6 @@ export function NotesView(props: NotesViewProps) {
 
     const payload: Partial<ActionItemRow> = {};
     if (patch.task !== undefined) payload.task = patch.task;
-    if (patch.dueDate !== undefined) payload.due_date = patch.dueDate;
     if (patch.ownerMemberId !== undefined) {
       payload.owner_member_id = patch.ownerMemberId;
       // A human assigned it, so it is no longer a guess.
@@ -91,10 +92,7 @@ export function NotesView(props: NotesViewProps) {
       return;
     }
 
-    await supabase
-      .from("meetings")
-      .update({ notes_edited: true })
-      .eq("id", props.meetingId);
+    await markEdited();
   }
 
   /** Marks the huddle as touched by a human. See persistNotes. */
@@ -125,9 +123,8 @@ export function NotesView(props: NotesViewProps) {
         owner_member_id: null,
         owner_name_raw: null,
         owner_confidence: "low",
-        due_date: null,
       })
-      .select("id, task, due_date, owner_member_id, owner_name_raw")
+      .select("id, task, owner_member_id, owner_name_raw")
       .single();
     setAddingItem(false);
 
@@ -141,7 +138,6 @@ export function NotesView(props: NotesViewProps) {
       {
         id: data.id,
         task: data.task,
-        dueDate: data.due_date,
         ownerMemberId: data.owner_member_id,
         ownerNameRaw: data.owner_name_raw,
       },
@@ -178,16 +174,27 @@ export function NotesView(props: NotesViewProps) {
       const payload = (await response.json().catch(() => ({}))) as {
         sent?: number;
         failed?: string[];
+        reason?: string | null;
         error?: string;
       };
 
       if (!response.ok) throw new Error(payload.error ?? "Couldn't send the notes.");
 
+      // Nothing got through. This used to say "Notes sent" with a footnote,
+      // which read as success — the huddle stays a draft, so it is not.
+      if (!payload.sent) {
+        throw new Error(
+          payload.reason
+            ? `Couldn't send the notes: ${payload.reason}`
+            : "Couldn't send the notes to anyone. Check the recipient addresses.",
+        );
+      }
+
       setSheetOpen(false);
 
       if (payload.failed?.length) {
         toast.show(
-          `Notes sent, but ${payload.failed.join(", ")} didn't go through.`,
+          `Sent to ${payload.sent}, but ${payload.failed.join(", ")} didn't go through.`,
           "error",
         );
       } else {
@@ -205,7 +212,6 @@ export function NotesView(props: NotesViewProps) {
     }
   }
 
-  const people = useMemo(() => buildPeople(notes), [notes]);
   const unassignedCount = items.filter((item) => !item.ownerMemberId).length;
 
   return (
@@ -227,65 +233,7 @@ export function NotesView(props: NotesViewProps) {
           : "Draft — not sent yet"}
       </span>
 
-      {/* ---------------------------------------------------------- summary */}
-      <section>
-        <CardLabel>Summary</CardLabel>
-        <Card padding="base">
-          <EditableText
-            value={notes.summary}
-            ariaLabel="Summary"
-            multiline
-            placeholder="Add a summary"
-            className="text-base leading-relaxed"
-            onSave={(summary) => persistNotes({ ...notes, summary })}
-          />
-        </Card>
-      </section>
-
-      {/* ----------------------------------------------- the ledger, mode 3 */}
-      <section>
-        <CardLabel>What everyone said</CardLabel>
-        <Ledger
-          mode="notes"
-          people={people.map((person) => ({ key: person.key, name: person.name }))}
-          renderPerson={(key) => {
-            const person = people.find((candidate) => candidate.key === key);
-            if (!person) return null;
-
-            return (
-              <dl className="flex flex-col gap-1">
-                {person.rows.map((row) => (
-                  <div
-                    key={row.id}
-                    className="flex flex-col gap-0.5 sm:flex-row sm:gap-2"
-                  >
-                    <dt
-                      className={cx(
-                        "shrink-0 font-mono text-xs sm:w-[76px] sm:pt-1.5",
-                        row.emphasis ? "text-amber" : "text-ink-3",
-                      )}
-                    >
-                      {row.label}
-                    </dt>
-                    <dd className="min-w-0 flex-1 text-sm">
-                      <EditableText
-                        value={row.text}
-                        ariaLabel={`${person.name}, ${row.label}`}
-                        multiline
-                        onSave={(text) =>
-                          persistNotes(applyRowEdit(notes, row.path, text))
-                        }
-                      />
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            );
-          }}
-        />
-      </section>
-
-      {/* ----------------------------------------------------- action items */}
+      {/* ------------------------------------ summary + action items, one box */}
       <section>
         <CardLabel
           trailing={
@@ -296,117 +244,116 @@ export function NotesView(props: NotesViewProps) {
             ) : undefined
           }
         >
-          Action items
+          Notes
         </CardLabel>
 
-        {items.length === 0 ? (
-          <Card padding="base">
-            <p className="text-sm text-ink-2">
-              No action items came out of this huddle. Add one below if
-              something was agreed that the notes missed.
-            </p>
-          </Card>
-        ) : (
-          <CardList as="ul">
-            {items.map((item, index) => (
-              <li
-                key={item.id}
-                style={{ "--i": index } as React.CSSProperties}
-                className="stagger-in border-b border-hairline p-4 last:border-b-0 sm:px-5"
+        <Card padding="loose" className="flex flex-col gap-6">
+          <SummaryBlock
+            value={notes.summary}
+            onSave={(summary) => persistNotes({ ...notes, summary })}
+          />
+
+          <div className="border-t border-hairline" />
+
+          <div>
+            <h3 className="eyebrow mb-3">Action items</h3>
+
+            {items.length === 0 ? (
+              <p className="text-sm text-ink-2">
+                No action items came out of this huddle. Add one below if
+                something was agreed that the notes missed.
+              </p>
+            ) : (
+              <ul className="-mx-1">
+                {items.map((item, index) => (
+                  <li
+                    key={item.id}
+                    style={{ "--i": index } as React.CSSProperties}
+                    className="stagger-in border-b border-hairline px-1 py-3 first:pt-0 last:border-b-0 last:pb-0"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Unassigned reads as a normal dropdown with an amber
+                          edge — it needs attention, it is not an error. The
+                          old "? samra" put the model's raw guess inside the
+                          control, which looked like corrupted data. */}
+                      <select
+                        aria-label={`Owner for: ${item.task}`}
+                        value={item.ownerMemberId ?? ""}
+                        onChange={(event) =>
+                          void patchItem(item.id, {
+                            ownerMemberId: event.target.value || null,
+                          })
+                        }
+                        className={cx(
+                          "h-8 rounded-[var(--radius)] border bg-paper-raised px-2 text-sm text-ink",
+                          item.ownerMemberId
+                            ? "border-hairline"
+                            : "border-amber ring-1 ring-amber/30",
+                        )}
+                      >
+                        <option value="">Unassigned</option>
+                        {props.members.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      <OwnerHint
+                        item={item}
+                        members={props.members}
+                        onAssign={(memberId) =>
+                          void patchItem(item.id, { ownerMemberId: memberId })
+                        }
+                      />
+                    </div>
+
+                    <div className="mt-1 flex items-start gap-1">
+                      <div className="min-w-0 flex-1">
+                        <EditableText
+                          value={item.task}
+                          ariaLabel="Task"
+                          multiline
+                          className="text-sm"
+                          onSave={(task) => void patchItem(item.id, { task })}
+                        />
+                      </div>
+                      <IconButton
+                        label={`Remove action item: ${item.task}`}
+                        onClick={() => setPendingDelete(item)}
+                        className="-mr-1 size-8 hover:text-live"
+                      >
+                        <span aria-hidden className="text-lg leading-none">
+                          ×
+                        </span>
+                      </IconButton>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <form onSubmit={addItem} noValidate className="mt-4 flex items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  label="Add an action item"
+                  value={newTask}
+                  maxLength={200}
+                  placeholder="What needs doing, and by whom"
+                  onChange={(event) => setNewTask(event.target.value)}
+                />
+              </div>
+              <Button
+                type="submit"
+                variant="tonal"
+                busy={addingItem}
+                disabled={!newTask.trim()}
               >
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    aria-label={`Owner for: ${item.task}`}
-                    value={item.ownerMemberId ?? ""}
-                    onChange={(event) =>
-                      void patchItem(item.id, {
-                        ownerMemberId: event.target.value || null,
-                      })
-                    }
-                    className={cx(
-                      "h-8 rounded-[var(--radius)] border px-2 text-sm",
-                      item.ownerMemberId
-                        ? "border-hairline bg-paper-raised text-ink"
-                        : "border-amber bg-amber-soft text-amber",
-                    )}
-                  >
-                    <option value="">
-                      {item.ownerNameRaw
-                        ? `? ${item.ownerNameRaw}`
-                        : "? Unassigned"}
-                    </option>
-                    {props.members.map((member) => (
-                      <option key={member.id} value={member.id}>
-                        {member.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    type="date"
-                    aria-label={`Due date for: ${item.task}`}
-                    value={item.dueDate ?? ""}
-                    onChange={(event) =>
-                      void patchItem(item.id, {
-                        dueDate: event.target.value || null,
-                      })
-                    }
-                    className="h-8 rounded-[var(--radius)] border border-hairline bg-paper-raised px-2 font-mono text-xs text-ink-2"
-                  />
-
-                  {item.dueDate && (
-                    <span className="font-mono text-xs text-ink-3">
-                      {formatDayLabel(parseDateOnly(item.dueDate))}
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-1 flex items-start gap-1">
-                  <div className="min-w-0 flex-1">
-                    <EditableText
-                      value={item.task}
-                      ariaLabel="Task"
-                      multiline
-                      className="text-sm"
-                      onSave={(task) => void patchItem(item.id, { task })}
-                    />
-                  </div>
-                  <IconButton
-                    label={`Remove action item: ${item.task}`}
-                    onClick={() => setPendingDelete(item)}
-                    className="-mr-1 size-8 hover:text-live"
-                  >
-                    <span aria-hidden className="text-lg leading-none">
-                      ×
-                    </span>
-                  </IconButton>
-                </div>
-              </li>
-            ))}
-          </CardList>
-        )}
-
-        <form onSubmit={addItem} noValidate className="mt-3 flex items-end gap-2">
-          <div className="flex-1">
-            <Input
-              label="Add an action item"
-              value={newTask}
-              maxLength={200}
-              placeholder="What needs doing, and by whom"
-              onChange={(event) => setNewTask(event.target.value)}
-            />
+                Add
+              </Button>
+            </form>
           </div>
-          {/* items-end on the form lines this up with the field's bottom
-              edge; no magic offset needed. */}
-          <Button
-            type="submit"
-            variant="tonal"
-            busy={addingItem}
-            disabled={!newTask.trim()}
-          >
-            Add
-          </Button>
-        </form>
+        </Card>
       </section>
 
       {/* ------------------------------------------ decisions and questions */}
@@ -430,7 +377,7 @@ export function NotesView(props: NotesViewProps) {
                       const list = [...notes[key]];
                       if (next) list[index] = next;
                       else list.splice(index, 1);
-                      return persistNotes({ ...notes, [key]: list });
+                      void persistNotes({ ...notes, [key]: list });
                     }}
                   />
                 </li>
@@ -445,10 +392,14 @@ export function NotesView(props: NotesViewProps) {
         <Button
           variant="secondary"
           size="lg"
-          onClick={() => window.open(`/api/meetings/${props.meetingId}/pdf`, "_blank")}
+          onClick={() => {
+            // The route replies with `content-disposition: attachment`, so the
+            // browser saves the file and stays on this page.
+            window.location.assign(`/api/meetings/${props.meetingId}/pdf`);
+          }}
           className="sm:flex-1"
         >
-          View PDF
+          Download PDF
         </Button>
         <Button
           variant="primary"
@@ -457,9 +408,7 @@ export function NotesView(props: NotesViewProps) {
           onClick={() => setSheetOpen(true)}
           className="sm:flex-[2]"
         >
-          {sent
-            ? "Send again"
-            : `Send to ${props.recipients.length} ${props.recipients.length === 1 ? "person" : "people"}`}
+          Send
         </Button>
       </div>
 
@@ -497,100 +446,191 @@ export function NotesView(props: NotesViewProps) {
   );
 }
 
-interface PersonRow {
-  id: string;
-  label: string;
-  text: string;
-  emphasis?: boolean;
-  path: RowPath;
+/**
+ * What the transcript said, when nobody is assigned yet.
+ *
+ * The roster can grow after a huddle is processed, so the match is re-run
+ * against the current members rather than trusting the one made at write time
+ * — a person added this morning becomes a one-tap assign instead of staying
+ * stuck as a raw string forever.
+ */
+function OwnerHint({
+  item,
+  members,
+  onAssign,
+}: {
+  item: ActionItemView;
+  members: { id: string; name: string }[];
+  onAssign: (memberId: string) => void;
+}) {
+  if (item.ownerMemberId) return null;
+
+  const raw = item.ownerNameRaw?.trim();
+  if (!raw) {
+    return <span className="text-xs text-amber">Needs an owner</span>;
+  }
+
+  const suggestedId = matchOwner(raw, members).memberId;
+  const suggested = members.find((member) => member.id === suggestedId);
+
+  if (suggested) {
+    return (
+      <Button
+        variant="tonal"
+        size="sm"
+        className="h-8"
+        onClick={() => onAssign(suggested.id)}
+      >
+        Assign to {suggested.name}
+      </Button>
+    );
+  }
+
+  return (
+    <span className="text-xs text-ink-3">
+      Transcript said &ldquo;{raw}&rdquo;
+    </span>
+  );
 }
 
-type RowPath =
-  | { kind: "update"; person: string; field: "yesterday" | "today" }
-  | { kind: "blocker"; person: string; field: "issue" | "needs" };
+/**
+ * The summary, on the transcript editor's pattern: an explicit Edit → Save /
+ * Cancel rather than the click-and-blur used for the short fields around it.
+ * The summary is the first thing in the email and the PDF, so a mis-click
+ * losing it silently is worse here than one extra tap.
+ */
+function SummaryBlock({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (next: string) => Promise<boolean>;
+}) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [busy, setBusy] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
 
-/** Collapses updates and blockers into one row list per person. */
-function buildPeople(notes: Notes) {
-  const order: string[] = [];
-  const rows = new Map<string, PersonRow[]>();
+  // A refresh must not overwrite an edit in progress.
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
 
-  const push = (person: string, row: PersonRow) => {
-    if (!rows.has(person)) {
-      rows.set(person, []);
-      order.push(person);
+  useEffect(() => {
+    if (!editing) return;
+    const field = fieldRef.current;
+    if (!field) return;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  }, [editing]);
+
+  async function commit() {
+    const next = draft.trim();
+    if (next === value.trim()) {
+      setEditing(false);
+      return;
     }
-    rows.get(person)!.push(row);
-  };
 
-  for (const update of notes.updates) {
-    if (update.yesterday.length) {
-      push(update.person, {
-        id: `${update.person}-yesterday`,
-        label: "Yesterday",
-        text: update.yesterday.join(" "),
-        path: { kind: "update", person: update.person, field: "yesterday" },
-      });
-    }
-    if (update.today.length) {
-      push(update.person, {
-        id: `${update.person}-today`,
-        label: "Today",
-        text: update.today.join(" "),
-        path: { kind: "update", person: update.person, field: "today" },
-      });
-    }
-  }
-
-  for (const blocker of notes.blockers) {
-    push(blocker.person, {
-      id: `${blocker.person}-blocker`,
-      label: "Blocker",
-      text: blocker.issue,
-      emphasis: true,
-      path: { kind: "blocker", person: blocker.person, field: "issue" },
-    });
-    if (blocker.needs) {
-      push(blocker.person, {
-        id: `${blocker.person}-needs`,
-        label: "Needs",
-        text: blocker.needs,
-        emphasis: true,
-        path: { kind: "blocker", person: blocker.person, field: "needs" },
-      });
+    setBusy(true);
+    const ok = await onSave(next);
+    setBusy(false);
+    if (ok) {
+      setEditing(false);
+      toast.show("Summary saved", "ok");
     }
   }
 
-  return order.map((person) => ({
-    key: person,
-    name: person,
-    rows: rows.get(person) ?? [],
-  }));
-}
-
-/** Writes an edited row back into notes_json without mutating the original. */
-function applyRowEdit(notes: Notes, path: RowPath, text: string): Notes {
-  if (path.kind === "update") {
-    return {
-      ...notes,
-      updates: notes.updates.map((update) =>
-        update.person === path.person
-          ? { ...update, [path.field]: text ? [text] : [] }
-          : update,
-      ),
-    };
+  async function clear() {
+    setBusy(true);
+    const ok = await onSave("");
+    setBusy(false);
+    if (ok) {
+      setConfirmClear(false);
+      setEditing(false);
+      toast.show("Summary deleted", "ok");
+    }
   }
 
-  return {
-    ...notes,
-    blockers: notes.blockers.map((blocker) =>
-      blocker.person === path.person
-        ? {
-            ...blocker,
-            ...(path.field === "issue"
-              ? { issue: text }
-              : { needs: text || null }),
-          }
-        : blocker,
-    ),
-  };
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="eyebrow">Summary</h3>
+        {!editing && (
+          <span className="-mr-2 flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+              {value.trim() ? "Edit" : "Add"}
+            </Button>
+            {value.trim() && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="hover:text-live"
+                onClick={() => setConfirmClear(true)}
+              >
+                Delete
+              </Button>
+            )}
+          </span>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-3">
+          <textarea
+            ref={fieldRef}
+            aria-label="Summary"
+            value={draft}
+            rows={4}
+            placeholder="Two sentences on where the team is."
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(value);
+                setEditing(false);
+              }
+            }}
+            className="w-full resize-y rounded-[var(--radius)] border border-hairline bg-paper-sunk p-3 leading-relaxed text-ink outline-none focus:border-amber focus:ring-1 focus:ring-amber"
+          />
+          <div className="flex flex-wrap gap-3">
+            <Button variant="primary" busy={busy} onClick={() => void commit()}>
+              {busy ? "Saving…" : "Save summary"}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => {
+                setDraft(value);
+                setEditing(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : value.trim() ? (
+        <p className="whitespace-pre-wrap leading-relaxed text-ink">{value}</p>
+      ) : (
+        <p className="text-ink-3 italic">No summary on this huddle.</p>
+      )}
+
+      <ConfirmDialog
+        open={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        onConfirm={() => void clear()}
+        title="Delete the summary?"
+        confirmLabel="Delete summary"
+        busy={busy}
+      >
+        <p>
+          The summary is the first thing people read in the email and the PDF.
+          Deleting it leaves those starting at the action items.
+        </p>
+        <p className="mt-2 text-sm text-ink-3">
+          The transcript is untouched — you can write a new one any time.
+        </p>
+      </ConfirmDialog>
+    </div>
+  );
 }

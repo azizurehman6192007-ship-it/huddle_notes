@@ -31,7 +31,7 @@ export default async function HuddlePage({
   const { h: legacyId } = await searchParams;
   if (legacyId) redirect(`/meetings/${legacyId}`);
 
-  const { team, member } = await requireMembership();
+  const { team } = await requireMembership();
   const supabase = await createClient();
 
   const [{ data: members }, { data: meetings }] = await Promise.all([
@@ -66,7 +66,7 @@ export default async function HuddlePage({
       <LiveRefresh active={anyInFlight} />
 
       {/* Search sits directly under the console; the list filters in place. */}
-      <HuddleBrowser rows={rows} canDelete={member.role === "lead"} />
+      <HuddleBrowser rows={rows} />
     </div>
   );
 }

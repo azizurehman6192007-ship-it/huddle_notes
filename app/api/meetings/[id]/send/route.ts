@@ -66,7 +66,7 @@ export async function POST(
         .eq("receives_notes", true),
       supabase
         .from("action_items")
-        .select("task, due_date, owner_member_id, owner_name_raw, members(name)")
+        .select("task, owner_member_id, owner_name_raw, members(name)")
         .eq("meeting_id", meetingId),
     ]);
 
@@ -102,7 +102,6 @@ export async function POST(
 
   const actionRows = (items ?? []) as unknown as {
     task: string;
-    due_date: string | null;
     owner_member_id: string | null;
     owner_name_raw: string | null;
     members: { name: string } | null;
@@ -116,7 +115,6 @@ export async function POST(
     actionItems: actionRows.map((row) => ({
       task: row.task,
       ownerName: row.members?.name ?? row.owner_name_raw,
-      due: row.due_date,
       unassigned: !row.owner_member_id,
     })),
     url: `${serverEnv.appUrl()}/meetings/${meetingId}`,
@@ -157,8 +155,13 @@ export async function POST(
       .eq("id", meetingId);
   }
 
+  // The provider's own words go back to the UI. Without this, a rejection
+  // ("you can only send testing emails to your own address") reached the lead
+  // as a bare address with no reason, and the only way to find out why was to
+  // replay the request by hand against Resend.
   return NextResponse.json({
     sent: delivered.length,
     failed: failed.map((result) => result.email),
+    reason: failed.find((result) => result.error)?.error ?? null,
   });
 }

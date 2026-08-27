@@ -667,3 +667,34 @@ Decisions made while building that §1–§14 did not specify. Keep this section
   edits made after processing are in the emailed HTML body but not in the attachment.
   Pre-existing, and untouched here — re-rendering on send is Phase 4 work.
 
+### ⚠️ TEMP DEMO HACK — email recipient override
+
+- **Every outgoing email goes to `tiyic0832@gmail.com`, whoever was selected.**
+  `TEMP_DEMO_FORCE_RECIPIENT` in `lib/email/resend.ts` overrides the destination at
+  the last step before the Resend call. This exists only so the demo completes.
+- **Why.** The project is on Resend's sandbox sender (`onboarding@resend.dev`), which
+  delivers only to the address the Resend account is registered under. Anything else
+  comes back `403 "You can only send testing emails to your own email address"`, and
+  the send fails on the final click.
+- **Scoped so nothing else can tell.** The UI still selects and confirms the real
+  recipients; `SendResult` still reports the *intended* address, so `email_log`,
+  `sent_count` and the confirm sheet stay truthful; the message body never mentions it.
+- **Remove it** by deleting the marked block and the two `TEMP DEMO HACK` lines in
+  `sendNotes`. Nothing else refers to it. **This must go before real use** — with a
+  verified domain in place it would silently stop the whole team getting their notes.
+- **The real fix** is verifying a domain at resend.com/domains and pointing
+  `EMAIL_FROM` at it.
+
+### Notes screen, after demo feedback
+
+- **Due dates are gone** from action items — the field, the PDF column and the email
+  cell. `action_items.due_date` is kept and the worker still populates it, so nothing
+  is lost and restoring the UI is all it would take.
+- **Unassigned means unassigned.** The owner dropdown reads "Unassigned" with an amber
+  edge rather than the model's raw guess prefixed with a question mark, and the PDF no
+  longer prints that guess as if it were the owner. The raw guess is shown beside the
+  control as context, and becomes a one-tap "Assign to X" when it resolves against the
+  *current* roster.
+- **Deleting a huddle lives only on the huddle's own page.** The per-row icon on the
+  list was removed — a destructive control one stray tap from the whole history.
+

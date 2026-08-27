@@ -40,7 +40,9 @@ export async function GET(
   return new Response(await data.arrayBuffer(), {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `inline; filename="huddle-${meeting.meeting_date}.pdf"`,
+      // attachment, not inline: the button says "Download PDF", so the
+      // browser must save the file rather than swap it in for the page.
+      "content-disposition": `attachment; filename="huddle-${meeting.meeting_date}.pdf"`,
       "cache-control": "private, max-age=60",
     },
   });

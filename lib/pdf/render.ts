@@ -9,7 +9,7 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import type { Notes } from "@/lib/ai/schema";
-import { formatDayLabel, formatLongDate, parseDateOnly } from "@/lib/util/format";
+import { formatLongDate, parseDateOnly } from "@/lib/util/format";
 
 /**
  * §9. A4, 44pt margins, watermark on every page drawn before the content.
@@ -42,7 +42,6 @@ export interface PdfInput {
   actionItems: {
     task: string;
     ownerName: string | null;
-    due: string | null;
     unassigned: boolean;
   }[];
 }
@@ -108,7 +107,10 @@ export async function renderNotesPdf(input: PdfInput): Promise<Uint8Array> {
   });
   y -= 26;
 
-  // --------------------------------------------------------------- summary
+  // ------------------------------------------- summary, then action items
+  // These are one block on screen now, so they read as one block here too:
+  // the summary runs straight into the table with no competing heading
+  // between them.
   if (input.notes.summary.trim()) {
     y = section(page, fonts, "SUMMARY", y);
     const lines = wrap(input.notes.summary.trim(), fonts.body, 11, CONTENT_WIDTH);
@@ -117,50 +119,7 @@ export async function renderNotesPdf(input: PdfInput): Promise<Uint8Array> {
       page.drawText(line, { x: MARGIN, y, size: 11, font: fonts.body, color: INK });
       y -= 15;
     }
-    y -= 12;
-  }
-
-  // ---------------------------------------------------- per-person updates
-  const people = personSections(input.notes);
-
-  if (people.length > 0) {
-    for (const person of people) {
-      ensure(60);
-      page.drawText(person.name.toUpperCase(), {
-        x: MARGIN,
-        y,
-        size: 11,
-        font: fonts.bold,
-        color: INK,
-      });
-      y -= 16;
-
-      for (const row of person.rows) {
-        const lines = wrap(row.text, fonts.body, 10, CONTENT_WIDTH - 74);
-        ensure(lines.length * 14 + 6);
-
-        page.drawText(row.label, {
-          x: MARGIN,
-          y,
-          size: 8,
-          font: fonts.mono,
-          color: row.emphasis ? AMBER : INK_3,
-        });
-
-        lines.forEach((line, index) => {
-          page.drawText(line, {
-            x: MARGIN + 74,
-            y: y - index * 14,
-            size: 10,
-            font: fonts.body,
-            color: INK,
-          });
-        });
-
-        y -= Math.max(14, lines.length * 14) + 2;
-      }
-      y -= 12;
-    }
+    y -= 16;
   }
 
   // ---------------------------------------------------------- action items
@@ -240,37 +199,6 @@ function section(page: PDFPage, fonts: Fonts, heading: string, y: number): numbe
   return y - 16;
 }
 
-function personSections(notes: Notes) {
-  const byPerson = new Map<
-    string,
-    { label: string; text: string; emphasis?: boolean }[]
-  >();
-
-  for (const update of notes.updates) {
-    const rows = byPerson.get(update.person) ?? [];
-    if (update.yesterday.length) {
-      rows.push({ label: "Yesterday", text: update.yesterday.join(" ") });
-    }
-    if (update.today.length) {
-      rows.push({ label: "Today", text: update.today.join(" ") });
-    }
-    byPerson.set(update.person, rows);
-  }
-
-  for (const blocker of notes.blockers) {
-    const rows = byPerson.get(blocker.person) ?? [];
-    rows.push({ label: "Blocker", text: blocker.issue, emphasis: true });
-    if (blocker.needs) {
-      rows.push({ label: "Needs", text: blocker.needs, emphasis: true });
-    }
-    byPerson.set(blocker.person, rows);
-  }
-
-  return Array.from(byPerson, ([name, rows]) => ({ name, rows })).filter(
-    (person) => person.rows.length > 0,
-  );
-}
-
 function actionTable(
   page: PDFPage,
   fonts: Fonts,
@@ -280,8 +208,10 @@ function actionTable(
   currentPage: () => PDFPage,
 ): number {
   const ownerWidth = 96;
-  const dueWidth = 74;
-  const taskWidth = CONTENT_WIDTH - ownerWidth - dueWidth - 20;
+  // Due dates were removed from the notes screen, so the column goes with
+  // them — the lead can no longer review one, and §1 says only reviewed
+  // content ships. The task gets the width back.
+  const taskWidth = CONTENT_WIDTH - ownerWidth - 20;
   let y = startY;
 
   for (const item of items) {
@@ -299,7 +229,10 @@ function actionTable(
       borderWidth: 0.75,
     });
 
-    target.drawText(item.ownerName ?? "Unassigned", {
+    // Unassigned means unassigned. `ownerName` still carries the model's raw
+    // guess for these, and printing it made the PDF look like the task had an
+    // owner it does not — the same confusion the "? samra" dropdown caused.
+    target.drawText(item.unassigned ? "Unassigned" : (item.ownerName ?? "Unassigned"), {
       x: MARGIN + 8,
       y: y + 1,
       size: 9,
@@ -315,15 +248,6 @@ function actionTable(
         font: fonts.body,
         color: INK,
       });
-    });
-
-    const due = item.due ? formatDayLabel(parseDateOnly(item.due)) : "—";
-    target.drawText(due, {
-      x: A4.width - MARGIN - dueWidth,
-      y: y + 1,
-      size: 9,
-      font: fonts.mono,
-      color: INK_2,
     });
 
     y -= rowHeight + 4;

@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { LedgerRow } from "@/components/ledger/LedgerRow";
 import { Card, CardList } from "@/components/ui/Card";
 import { cx } from "@/lib/util/cx";
@@ -11,15 +10,18 @@ export interface LedgerMember {
 }
 
 /**
- * The attendee list is not a sidebar. It is the same object in three states,
+ * The attendee list is not a sidebar. It is the same object in two states,
  * and the continuity between them is what makes the product feel coherent.
  *
  * setup — rows of attendees, tap to mark present or absent.
  * live  — the same rows, alongside the recording.
- * notes — the same rows expanded into what each person said.
  *
- * All three render as one card with hairline-separated rows, so the group
- * reads as a single object rather than a stack of tiles.
+ * §7 describes a third state, `notes`, where the rows expanded into what each
+ * person said. That section was cut from the notes screen after testing, so
+ * the mode is gone with it rather than left as an unreachable branch.
+ *
+ * Both render as one card with hairline-separated rows, so the group reads as
+ * a single object rather than a stack of tiles.
  */
 type LedgerProps =
   | {
@@ -39,12 +41,6 @@ type LedgerProps =
        * purpose: the row gesture belongs to tap-to-tag in Phase 2.
        */
       onToggle?: (memberId: string) => void;
-      className?: string;
-    }
-  | {
-      mode: "notes";
-      people: { key: string; name: string }[];
-      renderPerson: (key: string) => ReactNode;
       className?: string;
     };
 
@@ -67,28 +63,6 @@ function Empty({
 
 export function Ledger(props: LedgerProps) {
   const { className } = props;
-
-  if (props.mode === "notes") {
-    if (props.people.length === 0) {
-      return (
-        <Empty
-          title="No one was attributed in this huddle."
-          body="The action items below still apply."
-          className={className}
-        />
-      );
-    }
-
-    return (
-      <CardList className={className}>
-        {props.people.map((person, index) => (
-          <LedgerRow key={person.key} index={index} name={person.name} active>
-            <div className="mt-2">{props.renderPerson(person.key)}</div>
-          </LedgerRow>
-        ))}
-      </CardList>
-    );
-  }
 
   const members = props.members;
 
